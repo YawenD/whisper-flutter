@@ -11,6 +11,7 @@ void* whisper_init_bridge(const char* model_path);
 int whisper_full_bridge(void* ctx, float* samples, int n);
 void whisper_free_bridge(void* ctx);
 const char* whisper_version_bridge(void);
+const char* whisper_transcribe_from_file_bridge(const char* model_path, const char* wav_path);
 
 // Enforce bundling of this object file to prevent tree-shaking when using FFI
 void enforce_binding(void);
