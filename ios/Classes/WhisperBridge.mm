@@ -52,11 +52,17 @@ int whisper_full_bridge(void* ctx, float* samples, int n) {
         return -1;
     }
     
+    // Use default Whisper parameters (like the fast example)
+    // The defaults are already optimized by Whisper creators
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    // tu peux ici activer ou désactiver des options :
+    params.print_realtime = false;
     params.print_progress = false;
+    params.print_timestamps = false;
+    params.print_special = false;
     params.translate = false;
-    params.language = "auto";
+    params.language = "fr";
+    params.no_context = true;
+    params.single_segment = false;
 
     printf("[WHISPER] Starting whisper_full processing...\n");
     NSLog(@"⏳ [WHISPER] Starting whisper_full processing...");
