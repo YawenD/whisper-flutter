@@ -18,6 +18,15 @@
             "args": [
                 "--profile"
             ]
+        },
+        {
+            "name": "release",
+            "request": "launch",
+            "type": "dart",
+            "program": "example/lib/main.dart",
+            "args": [
+                "--release"
+            ]
         }
     ]
 }

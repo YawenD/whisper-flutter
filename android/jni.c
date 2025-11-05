@@ -169,37 +169,19 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullTranscribe(
     jfloat *audio_data_arr = (*env)->GetFloatArrayElements(env, audio_data, NULL);
     const jsize audio_data_length = (*env)->GetArrayLength(env, audio_data);
 
-    // Optimized parameters for fast transcription
+    // Use default Whisper parameters (like the fast example)
+    // The defaults are already optimized by Whisper creators
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    params.n_threads = num_threads;
-    
-    // Critical performance settings
-    params.n_max_text_ctx = 0;
-    params.no_context = true;
-    params.no_timestamps = true;
-    params.token_timestamps = false;
-    params.single_segment = true;
-    params.translate = false;
-    params.language = "fr";
-    params.detect_language = false;
-    
-    // Experimental speed-up techniques
-    params.audio_ctx = 256;
-    params.max_tokens = 20;
-    
-    // Temperature and thresholds
-    params.temperature = 0.0f;
-    params.no_speech_thold = 0.9f;
-    params.entropy_thold = 3.0f;
-    params.logprob_thold = -0.8f;
-    
-    // Disable all printing/logging
-    params.print_progress = false;
     params.print_realtime = false;
+    params.print_progress = false;
     params.print_timestamps = false;
     params.print_special = false;
-    
+    params.translate = false;
+    params.language = "fr";
+    params.n_threads = num_threads;
     params.offset_ms = 0;
+    params.no_context = true;
+    params.single_segment = false;
 
     whisper_reset_timings(context);
 

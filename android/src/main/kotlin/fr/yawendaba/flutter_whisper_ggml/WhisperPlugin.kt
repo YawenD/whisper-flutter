@@ -8,12 +8,18 @@ import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler
 import io.flutter.plugin.common.MethodChannel.Result
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 class WhisperPlugin : FlutterPlugin, MethodCallHandler {
     private lateinit var channel: MethodChannel
+    // Cache the Whisper context to avoid reloading the model on each call
+    private var cachedContext: WhisperContext? = null
+    private var cachedModelPath: String? = null
+    private val contextMutex = Mutex() // Mutex for thread-safe context access
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_whisper_ggml")
@@ -22,6 +28,41 @@ class WhisperPlugin : FlutterPlugin, MethodCallHandler {
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         channel.setMethodCallHandler(null)
+        // Release cached context when plugin is detached
+        CoroutineScope(Dispatchers.IO).launch {
+            contextMutex.withLock {
+                cachedContext?.release()
+                cachedContext = null
+                cachedModelPath = null
+            }
+        }
+    }
+
+    private suspend fun getOrCreateContext(modelPath: String): WhisperContext {
+        return withContext(Dispatchers.IO) {
+            contextMutex.withLock {
+                // Return cached context if same model path
+                if (cachedContext != null && cachedModelPath == modelPath) {
+                    Log.d("WhisperPlugin", "Reusing cached Whisper context")
+                    return@withLock cachedContext!!
+                }
+                
+                // Release old context if model path changed
+                if (cachedContext != null) {
+                    Log.d("WhisperPlugin", "Model path changed, releasing old context")
+                    cachedContext?.release()
+                    cachedContext = null
+                }
+                
+                // Load new model
+                Log.d("WhisperPlugin", "Loading Whisper model from: $modelPath")
+                val context = WhisperContext.createContextFromFile(modelPath)
+                cachedContext = context
+                cachedModelPath = modelPath
+                Log.d("WhisperPlugin", "Model loaded and cached")
+                return@withLock context
+            }
+        }
     }
 
     override fun onMethodCall(call: MethodCall, result: Result) {
@@ -39,9 +80,10 @@ class WhisperPlugin : FlutterPlugin, MethodCallHandler {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
                         val floatArray = readWavFile(filePath)
-                        val whisper = WhisperContext.createContextFromFile(modelPath)
+                        
+                        // Load model only once and cache it
+                        val whisper = getOrCreateContext(modelPath)
                         val text = whisper.transcribeData(floatArray, printTimestamp = false)
-                        whisper.release()
                         
                         withContext(Dispatchers.Main) {
                             result.success(text)
@@ -150,25 +192,11 @@ class WhisperPlugin : FlutterPlugin, MethodCallHandler {
             floatArray[i] = sampleInt / 32768.0f
         }
 
-        // Trim silence
-        val trimmed = trimSilence(floatArray)
-        Log.d("WhisperPlugin", "Audio samples: ${floatArray.size} -> ${trimmed.size} (after trim)")
+        // Don't trim silence - let Whisper handle it with its default parameters
+        // Trim silence can remove important audio content
+        Log.d("WhisperPlugin", "Audio samples: ${floatArray.size}")
 
-        return trimmed
-    }
-
-    private fun trimSilence(samples: FloatArray, threshold: Float = 0.02f): FloatArray {
-        var i0 = 0
-        var i1 = samples.size
-
-        while (i0 < i1 && kotlin.math.abs(samples[i0]) < threshold) i0++
-        while (i1 > i0 && kotlin.math.abs(samples[i1 - 1]) < threshold) i1--
-
-        return if (i0 > 0 || i1 < samples.size) {
-            samples.sliceArray(i0 until i1)
-        } else {
-            samples
-        }
+        return floatArray
     }
 }
 
