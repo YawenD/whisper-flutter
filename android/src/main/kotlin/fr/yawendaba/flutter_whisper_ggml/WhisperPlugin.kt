@@ -15,14 +15,6 @@ import java.nio.ByteOrder
 class WhisperPlugin : FlutterPlugin, MethodCallHandler {
     private lateinit var channel: MethodChannel
 
-    companion object {
-        @JvmStatic
-        fun registerWith(registrar: io.flutter.plugin.common.PluginRegistry.Registrar) {
-            val channel = MethodChannel(registrar.messenger(), "flutter_whisper_ggml")
-            channel.setMethodCallHandler(WhisperPlugin())
-        }
-    }
-
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         channel = MethodChannel(flutterPluginBinding.binaryMessenger, "flutter_whisper_ggml")
         channel.setMethodCallHandler(this)
@@ -35,6 +27,7 @@ class WhisperPlugin : FlutterPlugin, MethodCallHandler {
     override fun onMethodCall(call: MethodCall, result: Result) {
         when (call.method) {
             "transcribe" -> {
+                Log.d("WhisperPlugin", "transcribe called")
                 val filePath = call.argument<String>("filePath")
                 val modelPath = call.argument<String>("modelPath")
 
