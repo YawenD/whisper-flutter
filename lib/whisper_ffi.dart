@@ -22,9 +22,12 @@ class WhisperFFI {
   late final _CStringFree _freeCstr;
 
   WhisperFFI() {
-    _lib = Platform.isIOS
-        ? DynamicLibrary.process()
-        : DynamicLibrary.open('libwhisper.so');
+    if (!Platform.isIOS) {
+      throw UnsupportedError(
+        'WhisperFFI is only supported on iOS. Use WhisperMethodChannel on Android.',
+      );
+    }
+    _lib = DynamicLibrary.process();
 
     _transcribeFromFile = _lib
         .lookupFunction<

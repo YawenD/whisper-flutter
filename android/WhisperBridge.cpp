@@ -9,12 +9,102 @@
 #include <vector>
 #include <cstdint>
 #include <cmath>
+#include <map>
 #include <android/log.h>
 #include "whisper.h"
 
 #define TAG "WHISPER"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
+
+// Detect high-performance CPU cores (big cores) like the official example
+static int getHighPerfCpuCount() {
+    try {
+        // Method 1: Use CPU frequencies (preferred)
+        std::vector<int> frequencies;
+        int cpuIndex = 0;
+        
+        while (true) {
+            std::ostringstream path;
+            path << "/sys/devices/system/cpu/cpu" << cpuIndex << "/cpufreq/cpuinfo_max_freq";
+            std::ifstream freqFile(path.str());
+            
+            if (!freqFile.good()) {
+                break; // No more CPUs
+            }
+            
+            int freq = 0;
+            freqFile >> freq;
+            if (freq > 0) {
+                frequencies.push_back(freq);
+            }
+            cpuIndex++;
+        }
+        
+        if (!frequencies.empty()) {
+            // Sort frequencies
+            std::sort(frequencies.begin(), frequencies.end());
+            
+            // Count CPUs with frequency > minimum (big cores)
+            int minFreq = frequencies[0];
+            int bigCoreCount = 0;
+            for (int freq : frequencies) {
+                if (freq > minFreq) {
+                    bigCoreCount++;
+                }
+            }
+            
+            if (bigCoreCount > 0) {
+                LOGI("Detected %d big cores (frequency-based)", bigCoreCount);
+                return std::max(2, bigCoreCount); // At least 2 threads
+            }
+        }
+        
+        // Method 2: Fallback - use CPU variant from /proc/cpuinfo
+        std::ifstream cpuInfo("/proc/cpuinfo");
+        if (cpuInfo.good()) {
+            std::vector<int> variants;
+            std::string line;
+            
+            while (std::getline(cpuInfo, line)) {
+                if (line.find("CPU variant") != std::string::npos) {
+                    size_t pos = line.find("0x");
+                    if (pos != std::string::npos) {
+                        std::string hexStr = line.substr(pos + 2);
+                        int variant = 0;
+                        std::istringstream(hexStr) >> std::hex >> variant;
+                        variants.push_back(variant);
+                    }
+                }
+            }
+            
+            if (!variants.empty()) {
+                std::sort(variants.begin(), variants.end());
+                int minVariant = variants[0];
+                int bigCoreCount = 0;
+                for (int variant : variants) {
+                    if (variant == minVariant) {
+                        bigCoreCount++;
+                    }
+                }
+                
+                if (bigCoreCount > 0) {
+                    LOGI("Detected %d big cores (variant-based)", bigCoreCount);
+                    return std::max(2, bigCoreCount);
+                }
+            }
+        }
+    } catch (...) {
+        LOGE("Error detecting CPU cores");
+    }
+    
+    // Fallback: use hardware_concurrency minus 4 (like official example)
+    unsigned int totalCores = std::thread::hardware_concurrency();
+    int result = (totalCores > 4) ? (totalCores - 4) : totalCores;
+    result = std::max(2, result); // At least 2 threads
+    LOGI("Using fallback: %d threads (total cores: %u)", result, totalCores);
+    return result;
+}
 
 extern "C" __attribute__((visibility("default"))) __attribute__((used))
 void* whisper_init_bridge(const char* path) {
@@ -141,34 +231,56 @@ const char* whisper_transcribe_from_file_bridge(const char* model_path, const ch
         pcmf32.push_back(static_cast<float>(s) / 32768.0f);
     }
 
-    // Quick trim: remove leading/trailing low-energy samples
+    // Aggressive trim: remove leading/trailing low-energy samples
     if (!pcmf32.empty()) {
-        const float thr = 0.015f;
+        const float thr = 0.02f;  // Higher threshold for more aggressive trimming
         size_t i0 = 0, i1 = pcmf32.size();
+        // Trim from start
         while (i0 < i1 && std::fabs(pcmf32[i0]) < thr) ++i0;
+        // Trim from end
         while (i1 > i0 && std::fabs(pcmf32[i1 - 1]) < thr) --i1;
+        // Apply trim if significant reduction
         if (i0 > 0 || i1 < pcmf32.size()) {
             std::vector<float> tmp;
             tmp.reserve(i1 - i0);
             tmp.insert(tmp.end(), pcmf32.begin() + i0, pcmf32.begin() + i1);
             pcmf32.swap(tmp);
+            LOGI("Trimmed audio: %zu -> %zu samples", pcm16.size(), pcmf32.size());
         }
     }
 
-    // Configure Whisper
+    // Configure Whisper with aggressive performance optimizations
     whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    unsigned int cores = std::thread::hardware_concurrency();
-    if (cores == 0) cores = 4;
-    params.n_threads = (int) std::min(8u, cores);
-    params.n_max_text_ctx = 0;
-    params.no_context = true;
+    // Use high-performance cores detection (like official example)
+    params.n_threads = getHighPerfCpuCount();
+    
+    // Critical performance settings
+    params.n_max_text_ctx = 0;           // No text context (faster)
+    params.no_context = true;             // No past transcription context
+    params.no_timestamps = true;         // Disable timestamps
+    params.token_timestamps = false;      // Disable token-level timestamps
+    params.single_segment = true;         // Force single segment
+    params.translate = false;             // No translation
+    params.language = "fr";               // Force French (no detection)
+    params.detect_language = false;       // Disable language detection
+    
+    // Experimental speed-up techniques (very aggressive for short phrases)
+    params.audio_ctx = 256;               // Reduce audio context even more (default is ~1500)
+    
+    // Limit output length for short phrases (8 words = ~10-15 tokens)
+    params.max_tokens = 20;               // Limit tokens per segment for short phrases
+    
+    // Temperature and thresholds
+    params.temperature = 0.0f;            // Greedy decoding (fastest)
+    params.no_speech_thold = 0.9f;        // Very high threshold to skip silence very fast
+    params.entropy_thold = 3.0f;          // Higher entropy threshold (skip low-confidence)
+    params.logprob_thold = -0.8f;         // Higher logprob threshold
+    
+    // Disable all printing/logging
     params.print_progress = false;
     params.print_realtime = false;
-    params.no_timestamps = true;
-    params.single_segment = true;
     params.print_timestamps = false;
-    params.translate = false;
-    params.language = "fr";
+    params.print_special = false;
 
     LOGI("samples=%zu sr=16000", pcmf32.size());
     LOGI("---> whisper_full");
@@ -198,20 +310,38 @@ const char* whisper_transcribe_from_file_bridge(const char* model_path, const ch
 
 extern "C" __attribute__((visibility("default"))) __attribute__((used))
 int whisper_full_bridge(void* ctx, float* samples, int n) {
-    LOGI("[WHISPER] whisper_full_bridge called with ctx=%p, n_samples=%d", ctx, n);
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    unsigned int cores = std::thread::hardware_concurrency();
-    if (cores == 0) cores = 4;
-    params.n_threads = std::min(4u, cores); // ✅ limite aux big cores
-    params.language = "fr";
-    params.translate = false;
-    params.no_timestamps = true;
-    params.token_timestamps = false; // ✅ souvent oublié
-    params.temperature = 0.0f;
+    // Use high-performance cores detection (like official example)
+    params.n_threads = getHighPerfCpuCount();
+    
+    // Critical performance settings
     params.n_max_text_ctx = 0;
+    params.no_context = true;
+    params.no_timestamps = true;
+    params.token_timestamps = false;
     params.single_segment = true;
+    params.translate = false;
+    params.language = "fr";
+    params.detect_language = false;
+    
+    // Experimental speed-up techniques (very aggressive for short phrases)
+    params.audio_ctx = 256;               // Reduce audio context even more
+    
+    // Limit output length for short phrases
+    params.max_tokens = 20;
+    
+    // Temperature and thresholds
+    params.temperature = 0.0f;
+    params.no_speech_thold = 0.9f;        // Very high threshold
+    params.entropy_thold = 3.0f;          // Higher entropy threshold
+    params.logprob_thold = -0.8f;         // Higher logprob threshold
+    
+    // Disable all printing/logging
     params.print_progress = false;
     params.print_realtime = false;
+    params.print_timestamps = false;
+    params.print_special = false;
+    
     return whisper_full((struct whisper_context*)ctx, params, samples, n);
 }
 

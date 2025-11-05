@@ -43,6 +43,8 @@ flutter:
   plugin:
     platforms:
       android:
+        package: fr.yawendaba.flutter_whisper_ggml
+        pluginClass: WhisperPlugin
         ffiPlugin: true
       ios:
         ffiPlugin: true

@@ -169,18 +169,37 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullTranscribe(
     jfloat *audio_data_arr = (*env)->GetFloatArrayElements(env, audio_data, NULL);
     const jsize audio_data_length = (*env)->GetArrayLength(env, audio_data);
 
-    // The below adapted from the Objective-C iOS sample
+    // Optimized parameters for fast transcription
     struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
-    params.print_realtime = true;
-    params.print_progress = false;
-    params.print_timestamps = true;
-    params.print_special = false;
-    params.translate = false;
-    params.language = "en";
     params.n_threads = num_threads;
-    params.offset_ms = 0;
+    
+    // Critical performance settings
+    params.n_max_text_ctx = 0;
     params.no_context = true;
-    params.single_segment = false;
+    params.no_timestamps = true;
+    params.token_timestamps = false;
+    params.single_segment = true;
+    params.translate = false;
+    params.language = "fr";
+    params.detect_language = false;
+    
+    // Experimental speed-up techniques
+    params.audio_ctx = 256;
+    params.max_tokens = 20;
+    
+    // Temperature and thresholds
+    params.temperature = 0.0f;
+    params.no_speech_thold = 0.9f;
+    params.entropy_thold = 3.0f;
+    params.logprob_thold = -0.8f;
+    
+    // Disable all printing/logging
+    params.print_progress = false;
+    params.print_realtime = false;
+    params.print_timestamps = false;
+    params.print_special = false;
+    
+    params.offset_ms = 0;
 
     whisper_reset_timings(context);
 

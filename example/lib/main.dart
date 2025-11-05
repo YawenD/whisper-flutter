@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_whisper_ggml/whisper_ffi.dart';
+import 'package:flutter_whisper_ggml/flutter_whisper_ggml.dart';
 import 'package:just_audio/just_audio.dart' as just_audio;
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -24,7 +24,7 @@ class _WhisperExampleAppState extends State<WhisperExampleApp> {
   bool _isRecording = false;
   bool _isPlaying = false;
   String _text = 'Clique pour enregistrer';
-  late WhisperFFI _whisper;
+  late Whisper _whisper;
   late final String _modelPath;
 
   @override
@@ -124,7 +124,7 @@ class _WhisperExampleAppState extends State<WhisperExampleApp> {
   }
 
   Future<void> _initWhisper() async {
-    _whisper = WhisperFFI();
+    _whisper = Whisper();
     _modelPath = await _whisper.prepareModel(
       'assets/models/ggml-tiny-q5_1.bin',
     );
