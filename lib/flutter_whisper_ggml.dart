@@ -1,8 +1,8 @@
 import 'dart:io';
+
 import 'whisper_method_channel.dart';
 
 // Export implementations for direct access if needed
-export 'whisper_ffi.dart' show WhisperFFI;
 export 'whisper_method_channel.dart' show WhisperMethodChannel;
 
 /// Main API for flutter_whisper_ggml
