@@ -176,9 +176,19 @@ public class WhisperPlugin: NSObject, FlutterPlugin {
             throw NSError(domain: "WhisperPlugin", code: -1, userInfo: [NSLocalizedDescriptionKey: "WAV must be PCM16 mono @16kHz"])
         }
         
+        // Determine effective data size: some recorders may leave data chunk size to 0 until finalization
+        var effectiveDataSize = dsz
+        if dsz == 0 || ds + dsz > data.count {
+            effectiveDataSize = max(0, data.count - ds)
+            NSLog("⚠️ [WHISPER] WAV data chunk reported size %d, using effective size %d", dsz, effectiveDataSize)
+        }
+        
         // Read PCM16 samples
         let bytesPerSample = bps / 8
-        let totalSamples = dsz / bytesPerSample / ch
+        let totalSamples = effectiveDataSize / bytesPerSample / ch
+        if totalSamples <= 0 {
+            throw NSError(domain: "WhisperPlugin", code: -1, userInfo: [NSLocalizedDescriptionKey: "No audio samples in WAV data chunk"])
+        }
         
         // Convert to float32
         var floatArray = [Float](repeating: 0, count: totalSamples)
@@ -200,7 +210,9 @@ public class WhisperPlugin: NSObject, FlutterPlugin {
         }
         
         guard result == 0 else {
-            throw NSError(domain: "WhisperPlugin", code: Int(result), userInfo: [NSLocalizedDescriptionKey: "Whisper transcription failed"])
+            let msg = "Whisper transcription failed (code \(result))"
+            NSLog("❌ [WHISPER] %@", msg)
+            throw NSError(domain: "WhisperPlugin", code: Int(result), userInfo: [NSLocalizedDescriptionKey: msg])
         }
         
         // Get result
