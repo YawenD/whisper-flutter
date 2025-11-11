@@ -27,6 +27,12 @@
             "args": [
                 "--release"
             ]
+        },
+        {
+            "name": "stream",
+            "request": "launch",
+            "type": "dart",
+            "program": "example/lib/stream.dart",
         }
     ]
 }
