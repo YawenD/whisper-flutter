@@ -1,5 +1,7 @@
 import 'dart:io';
-import 'package:flutter/services.dart' show MethodChannel, PlatformException, rootBundle;
+
+import 'package:flutter/services.dart'
+    show MethodChannel, PlatformException, rootBundle;
 import 'package:path_provider/path_provider.dart';
 
 class WhisperMethodChannel {
@@ -49,5 +51,20 @@ class WhisperMethodChannel {
       throw Exception('Erreur de transcription: ${e.message}');
     }
   }
-}
 
+  Future<String> transcribeStream({
+    required String modelPath,
+    required Stream<List<int>> audioStream,
+  }) async {
+    final result = await _channel.invokeMethod<String>('transcribeStream', {
+      'modelPath': modelPath,
+      'audioStream': audioStream,
+    });
+
+    if (result == null || result.isEmpty) {
+      throw Exception('Erreur: transcription retournée vide');
+    }
+
+    return result;
+  }
+}

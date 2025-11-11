@@ -16,7 +16,6 @@ class WhisperExampleApp extends StatefulWidget {
 
 class _WhisperExampleAppState extends State<WhisperExampleApp> {
   final AudioRecorder _recorder = AudioRecorder();
-  bool _isRecording = false;
   late Whisper _whisper;
   late final String _modelPath;
 
@@ -33,7 +32,7 @@ class _WhisperExampleAppState extends State<WhisperExampleApp> {
     await Permission.microphone.request();
   }
 
-  Future<void> _startStream() async {
+  Future<void> _startSpeechReconization() async {
     await _recorder.startStream(
       RecordConfig(
         encoder: AudioEncoder.wav,
@@ -44,7 +43,7 @@ class _WhisperExampleAppState extends State<WhisperExampleApp> {
     );
   }
 
-  Future<void> _stopStream() async {
+  Future<void> _stopSpeechReconization() async {
     await _recorder.stop();
   }
 
@@ -55,8 +54,6 @@ class _WhisperExampleAppState extends State<WhisperExampleApp> {
     );
     print('🧠 Modèle prêt: ' + _modelPath);
   }
-
-  Future<void> _transcribe() async {}
 
   @override
   void dispose() {
@@ -75,17 +72,11 @@ class _WhisperExampleAppState extends State<WhisperExampleApp> {
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _isRecording ? Colors.red : Colors.blue,
-                  ),
-                  onPressed: _startStream,
+                  onPressed: _startSpeechReconization,
                   child: const Text('Démarrer la stream'),
                 ),
                 ElevatedButton(
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _isRecording ? Colors.red : Colors.blue,
-                  ),
-                  onPressed: _stopStream,
+                  onPressed: _stopSpeechReconization,
                   child: const Text('Stopper la stream'),
                 ),
               ],

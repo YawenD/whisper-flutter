@@ -8,7 +8,7 @@ export 'whisper_method_channel.dart' show WhisperMethodChannel;
 /// Main API for flutter_whisper_ggml
 /// Automatically uses Method Channel on both Android and iOS
 class Whisper {
-  late final dynamic _impl;
+  late final WhisperMethodChannel _impl;
 
   Whisper() {
     if (Platform.isAndroid || Platform.isIOS) {
@@ -31,5 +31,15 @@ class Whisper {
     required String wavPath,
   }) {
     return _impl.transcribe(modelPath: modelPath, wavPath: wavPath);
+  }
+
+  Future<String> listenAndTranscribeSpeech({
+    required String modelPath,
+    required Stream<List<int>> audioStream,
+  }) {
+    return _impl.transcribeStream(
+      modelPath: modelPath,
+      audioStream: audioStream,
+    );
   }
 }
