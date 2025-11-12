@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'whisper_method_channel.dart';
 
+export 'live_transcriber.dart' show WhisperLiveTranscriber;
 // Export implementations for direct access if needed
 export 'whisper_method_channel.dart' show WhisperMethodChannel;
 

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_whisper_ggml/flutter_whisper_ggml.dart';
 import 'package:permission_handler/permission_handler.dart';
-import 'package:record/record.dart';
 
 void main() => runApp(const WhisperExampleApp());
 
@@ -15,9 +14,12 @@ class WhisperExampleApp extends StatefulWidget {
 }
 
 class _WhisperExampleAppState extends State<WhisperExampleApp> {
-  final AudioRecorder _recorder = AudioRecorder();
-  late Whisper _whisper;
-  late final String _modelPath;
+  late final WhisperLiveTranscriber _transcriber;
+  StreamSubscription<String>? _transcriptSubscription;
+  final List<String> _transcripts = [];
+  bool _isReady = false;
+  bool _isListening = false;
+  String? _error;
 
   @override
   void initState() {
@@ -28,35 +30,83 @@ class _WhisperExampleAppState extends State<WhisperExampleApp> {
   }
 
   Future<void> _init() async {
-    await _initWhisper();
-    await Permission.microphone.request();
-  }
+    _transcriber = WhisperLiveTranscriber();
 
-  Future<void> _startSpeechReconization() async {
-    await _recorder.startStream(
-      RecordConfig(
-        encoder: AudioEncoder.wav,
-        sampleRate: 16000,
-        numChannels: 1,
-        bitRate: 16,
-      ),
+    final hasPerm = await Permission.microphone.isGranted;
+    if (!hasPerm) {
+      await Permission.microphone.request().then((status) {
+        if (!status.isGranted) {
+          setState(() {
+            _error =
+                'Micro non autorisé. Activez la permission pour continuer.';
+          });
+          return;
+        }
+      });
+    }
+
+    await _transcriber.prepare(
+      modelAssetPath: 'assets/models/ggml-tiny-q5_1.bin',
+      modelPath: 'assets/models/silero_vad.onnx',
     );
+
+    setState(() {
+      _isReady = true;
+    });
   }
 
-  Future<void> _stopSpeechReconization() async {
-    await _recorder.stop();
+  Future<void> _startListening() async {
+    if (!_isReady || _isListening) return;
+
+    try {
+      await _transcriber.startListening();
+      _transcriptSubscription = _transcriber.transcripts.listen(
+        (text) {
+          if (text.trim().isEmpty) return;
+          setState(() {
+            _transcripts.add(text);
+          });
+        },
+        onError: (Object error) {
+          setState(() {
+            _error = 'Erreur transcription: $error';
+          });
+        },
+      );
+      setState(() {
+        _isListening = true;
+        _error = null;
+      });
+    } catch (e) {
+      setState(() {
+        _error = 'Impossible de démarrer l\'écoute: $e';
+      });
+    }
   }
 
-  Future<void> _initWhisper() async {
-    _whisper = Whisper();
-    _modelPath = await _whisper.prepareModel(
-      'assets/models/ggml-tiny-q5_1.bin',
-    );
-    print('🧠 Modèle prêt: ' + _modelPath);
+  Future<void> _stopListening() async {
+    if (!_isListening) return;
+
+    await _transcriptSubscription?.cancel();
+    _transcriptSubscription = null;
+
+    try {
+      await _transcriber.stopListening();
+    } catch (e) {
+      setState(() {
+        _error = 'Erreur lors de l\'arrêt: $e';
+      });
+    }
+
+    setState(() {
+      _isListening = false;
+    });
   }
 
   @override
   void dispose() {
+    _transcriptSubscription?.cancel();
+    _transcriber.dispose();
     super.dispose();
   }
 
@@ -70,14 +120,55 @@ class _WhisperExampleAppState extends State<WhisperExampleApp> {
             padding: const EdgeInsets.all(16),
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                if (!_isReady)
+                  const Text(
+                    'Initialisation de Whisper en cours...',
+                    textAlign: TextAlign.center,
+                  ),
+                if (_error != null)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: Text(
+                      _error!,
+                      style: const TextStyle(color: Colors.red),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
                 ElevatedButton(
-                  onPressed: _startSpeechReconization,
-                  child: const Text('Démarrer la stream'),
+                  onPressed: _isReady && !_isListening ? _startListening : null,
+                  child: Text(_isListening ? 'Écoute en cours...' : 'Démarrer'),
                 ),
                 ElevatedButton(
-                  onPressed: _stopSpeechReconization,
-                  child: const Text('Stopper la stream'),
+                  onPressed: _stopListening,
+                  child: const Text('Arrêter'),
+                ),
+                const SizedBox(height: 24),
+                Expanded(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.blueGrey),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: _transcripts.isEmpty
+                        ? const Center(
+                            child: Text(
+                              'Les transcriptions apparaîtront ici.',
+                              textAlign: TextAlign.center,
+                            ),
+                          )
+                        : ListView.separated(
+                            padding: const EdgeInsets.all(12),
+                            itemBuilder: (context, index) {
+                              final text = _transcripts[index];
+                              return Text('• $text');
+                            },
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 8),
+                            itemCount: _transcripts.length,
+                          ),
+                  ),
                 ),
               ],
             ),

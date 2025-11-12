@@ -7,7 +7,7 @@ import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa_onnx;
 export 'whisper_method_channel.dart' show WhisperMethodChannel;
 
 abstract class IVadAdapter {
-  Future<void> initSilero({required String modelDir});
+  Future<void> initSilero({required String modelPath});
   Stream<List<double>> listenToSpeechEnd(List<int> samples);
   Future<void> dispose();
 }
@@ -23,14 +23,15 @@ class VadAdapter implements IVadAdapter {
   late sherpa_onnx.VadModelConfig _vadConfig;
 
   @override
-  Future<void> initSilero({required String modelDir}) async {
+  Future<void> initSilero({required String modelPath}) async {
     sherpa_onnx.initBindings();
 
     final sileroVadConfig = sherpa_onnx.SileroVadModelConfig(
-      model: await copyAssetFile('$modelDir/silero_vad.onnx'),
-      minSilenceDuration: 0.25,
+      model: await copyAssetFile(modelPath),
+      // threshold: 0.6,
+      minSilenceDuration: 1.75,
       minSpeechDuration: 0.5,
-      maxSpeechDuration: 5.0,
+      maxSpeechDuration: 60.0,
     );
 
     _vadConfig = sherpa_onnx.VadModelConfig(
@@ -60,6 +61,7 @@ class VadAdapter implements IVadAdapter {
 
       while (!_vad!.isEmpty()) {
         final segment = _vad!.front();
+        _vad!.pop();
         final samples = segment.samples;
         yield samples;
       }

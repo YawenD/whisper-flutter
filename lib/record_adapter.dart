@@ -15,7 +15,7 @@ class RecordAdapter implements IRecordAdapter {
   Future<Stream<Uint8List>> startStream() async {
     return await _audioRecorder.startStream(
       RecordConfig(
-        encoder: AudioEncoder.wav,
+        encoder: AudioEncoder.pcm16bits,
         sampleRate: 16000,
         numChannels: 1,
         bitRate: 16,
