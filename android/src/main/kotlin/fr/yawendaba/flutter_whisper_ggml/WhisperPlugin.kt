@@ -98,23 +98,11 @@ class WhisperPlugin : FlutterPlugin, MethodCallHandler {
             }
             "transcribeStream" -> {
                 Log.d("WhisperPlugin", "transcribeStream called")
-                val modelPath = call.argument<String>("modelPath")
-                val audioStream = call.argument<Stream<List<Int>>>("audioStream")
-                
-                CoroutineScope(Dispatchers.IO).launch {
-                    try {
-                        val whisper = getOrCreateContext(modelPath)
-                        val text = whisper.transcribeData(floatArray, printTimestamp = false)
-                        withContext(Dispatchers.Main) {
-                            result.success(text)
-                        }
-                    } catch (e: Exception) {
-                        Log.e("WhisperPlugin", "Error during transcription", e)
-                        withContext(Dispatchers.Main) {
-                            result.error("TRANSCRIPTION_ERROR", e.message, null)
-                        }
-                    }
-                }
+                result.error(
+                    "UNSUPPORTED",
+                    "transcribeStream n'est pas disponible sur Android. Utilisez le pipeline FFI.",
+                    null
+                )
             }
             else -> {
                 result.notImplemented()

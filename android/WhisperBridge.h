@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -18,6 +20,14 @@ void enforce_binding(void);
 
 const char* whisper_get_result_bridge(void* ctx);
 void whisper_free_cstr_bridge(const char* s);
+
+void* whisper_stream_session_create(const char* model_path);
+void whisper_stream_session_destroy(void* session);
+int whisper_stream_session_add_pcm16(void* session, const int16_t* samples, int n_samples);
+int whisper_stream_session_add_pcm_f32(void* session, const float* samples, int n_samples);
+int whisper_stream_session_transcribe(void* session);
+const char* whisper_stream_session_get_result(void* session);
+void whisper_stream_session_reset(void* session);
 
 #ifdef __cplusplus
 } // extern "C"

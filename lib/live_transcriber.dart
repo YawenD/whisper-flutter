@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_whisper_ggml/record_adapter.dart';
@@ -51,11 +50,6 @@ class WhisperLiveTranscriber {
   Future<void> startListening() async {
     if (_listening) {
       throw StateError('Live transcription already started.');
-    }
-    if (!Platform.isIOS) {
-      throw UnsupportedError(
-        'WhisperLiveTranscriber supporte uniquement iOS pour le moment.',
-      );
     }
     final modelPath = _modelPath;
     if (modelPath == null) {
