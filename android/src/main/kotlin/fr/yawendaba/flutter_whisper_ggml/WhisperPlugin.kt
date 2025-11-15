@@ -104,6 +104,32 @@ class WhisperPlugin : FlutterPlugin, MethodCallHandler {
                     null
                 )
             }
+            "transcribeData" -> {
+                Log.d("WhisperPlugin", "transcribeData called")
+                val modelPath = call.argument<String>("modelPath")
+                val audioData = call.argument<FloatArray>("audioData")
+
+                if (modelPath == null || audioData == null) {
+                    result.error("INVALID_ARGUMENT", "modelPath and audioData are required", null)
+                    return
+                }
+
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        val whisper = getOrCreateContext(modelPath)
+                        val text = whisper.transcribeData(audioData, printTimestamp = false)
+
+                        withContext(Dispatchers.Main) {
+                            result.success(text)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("WhisperPlugin", "Error during transcription", e)
+                        withContext(Dispatchers.Main) {
+                            result.error("TRANSCRIPTION_ERROR", e.message, null)
+                        }
+                    }
+                }
+            }
             else -> {
                 result.notImplemented()
             }

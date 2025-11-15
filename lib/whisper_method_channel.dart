@@ -1,10 +1,9 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/services.dart'
     show MethodChannel, PlatformException, rootBundle;
 import 'package:path_provider/path_provider.dart';
-
-import 'src/ios_whisper_ffi.dart';
 
 class WhisperMethodChannel {
   static const MethodChannel _channel = MethodChannel('flutter_whisper_ggml');
@@ -54,27 +53,14 @@ class WhisperMethodChannel {
     }
   }
 
-  Future<String> transcribeStream({
+  Future<String> transcribeData({
     required String modelPath,
-    required Stream<List<int>> audioStream,
+    required Float32List audioData,
   }) async {
-    if (Platform.isIOS) {
-      final session = WhisperStreamSession.create(modelPath);
-      try {
-        await for (final chunk in audioStream) {
-          session.appendPcmBytes(chunk);
-        }
-        return session.transcribeSync();
-      } finally {
-        session.dispose();
-      }
-    }
-
-    final result = await _channel.invokeMethod<String>('transcribeStream', {
+    final result = await _channel.invokeMethod<String>('transcribeData', {
       'modelPath': modelPath,
-      'audioStream': audioStream,
+      'audioData': audioData,
     });
-
     if (result == null || result.isEmpty) {
       throw Exception('Erreur: transcription retournée vide');
     }

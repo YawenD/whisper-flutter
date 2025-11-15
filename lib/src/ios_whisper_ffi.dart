@@ -78,61 +78,53 @@ class WhisperNativeFfi {
     );
   }
 
-  late final _WhisperStreamSessionCreate _createSession =
-      _library
-          .lookup<NativeFunction<_WhisperStreamSessionCreateNative>>(
-            'whisper_stream_session_create',
-          )
-          .asFunction();
+  late final _WhisperStreamSessionCreate _createSession = _library
+      .lookup<NativeFunction<_WhisperStreamSessionCreateNative>>(
+        'whisper_stream_session_create',
+      )
+      .asFunction();
 
-  late final _WhisperStreamSessionDestroy _destroySession =
-      _library
-          .lookup<NativeFunction<_WhisperStreamSessionDestroyNative>>(
-            'whisper_stream_session_destroy',
-          )
-          .asFunction();
+  late final _WhisperStreamSessionDestroy _destroySession = _library
+      .lookup<NativeFunction<_WhisperStreamSessionDestroyNative>>(
+        'whisper_stream_session_destroy',
+      )
+      .asFunction();
 
-  late final _WhisperStreamSessionAddPcm16 _addPcm16 =
-      _library
-          .lookup<NativeFunction<_WhisperStreamSessionAddPcm16Native>>(
-            'whisper_stream_session_add_pcm16',
-          )
-          .asFunction();
+  late final _WhisperStreamSessionAddPcm16 _addPcm16 = _library
+      .lookup<NativeFunction<_WhisperStreamSessionAddPcm16Native>>(
+        'whisper_stream_session_add_pcm16',
+      )
+      .asFunction();
 
-  late final _WhisperStreamSessionAddPcmF32 _addPcmF32 =
-      _library
-          .lookup<NativeFunction<_WhisperStreamSessionAddPcmF32Native>>(
-            'whisper_stream_session_add_pcm_f32',
-          )
-          .asFunction();
+  late final _WhisperStreamSessionAddPcmF32 _addPcmF32 = _library
+      .lookup<NativeFunction<_WhisperStreamSessionAddPcmF32Native>>(
+        'whisper_stream_session_add_pcm_f32',
+      )
+      .asFunction();
 
-  late final _WhisperStreamSessionTranscribe _transcribe =
-      _library
-          .lookup<NativeFunction<_WhisperStreamSessionTranscribeNative>>(
-            'whisper_stream_session_transcribe',
-          )
-          .asFunction();
+  late final _WhisperStreamSessionTranscribe _transcribe = _library
+      .lookup<NativeFunction<_WhisperStreamSessionTranscribeNative>>(
+        'whisper_stream_session_transcribe',
+      )
+      .asFunction();
 
-  late final _WhisperStreamSessionGetResult _getResult =
-      _library
-          .lookup<NativeFunction<_WhisperStreamSessionGetResultNative>>(
-            'whisper_stream_session_get_result',
-          )
-          .asFunction();
+  late final _WhisperStreamSessionGetResult _getResult = _library
+      .lookup<NativeFunction<_WhisperStreamSessionGetResultNative>>(
+        'whisper_stream_session_get_result',
+      )
+      .asFunction();
 
-  late final _WhisperStreamSessionReset _resetSession =
-      _library
-          .lookup<NativeFunction<_WhisperStreamSessionResetNative>>(
-            'whisper_stream_session_reset',
-          )
-          .asFunction();
+  late final _WhisperStreamSessionReset _resetSession = _library
+      .lookup<NativeFunction<_WhisperStreamSessionResetNative>>(
+        'whisper_stream_session_reset',
+      )
+      .asFunction();
 
-  late final _WhisperFreeCString _freeCString =
-      _library
-          .lookup<NativeFunction<_WhisperFreeCStringNative>>(
-            'whisper_free_cstr_bridge',
-          )
-          .asFunction();
+  late final _WhisperFreeCString _freeCString = _library
+      .lookup<NativeFunction<_WhisperFreeCStringNative>>(
+        'whisper_free_cstr_bridge',
+      )
+      .asFunction();
 
   /// Create a new streaming session for the given model path.
   Pointer<Void> createSession(String modelPath) {

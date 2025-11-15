@@ -33,6 +33,15 @@
             "request": "launch",
             "type": "dart",
             "program": "example/lib/stream.dart",
+        },
+        {
+            "name": "stream_release",
+            "request": "launch",
+            "type": "dart",
+            "program": "example/lib/stream.dart",
+            "args": [
+                "--release"
+            ]
         }
     ]
 }

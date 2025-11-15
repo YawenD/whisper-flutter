@@ -19,8 +19,15 @@
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO, TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, TAG, __VA_ARGS__)
 
+static std::atomic<int> gCachedThreadCount{0};
+
 // Detect high-performance CPU cores (big cores) like the official example
 static int getHighPerfCpuCount() {
+    int cached = gCachedThreadCount.load();
+    if (cached > 0) {
+        return cached;
+    }
+
     try {
         // Method 1: Use CPU frequencies (preferred)
         std::vector<int> frequencies;
@@ -57,8 +64,10 @@ static int getHighPerfCpuCount() {
             }
             
             if (bigCoreCount > 0) {
+                int result = std::max(2, bigCoreCount);
+                gCachedThreadCount.store(result);
                 LOGI("Detected %d big cores (frequency-based)", bigCoreCount);
-                return std::max(2, bigCoreCount); // At least 2 threads
+                return result; // At least 2 threads
             }
         }
         
@@ -91,8 +100,10 @@ static int getHighPerfCpuCount() {
                 }
                 
                 if (bigCoreCount > 0) {
+                    int result = std::max(2, bigCoreCount);
+                    gCachedThreadCount.store(result);
                     LOGI("Detected %d big cores (variant-based)", bigCoreCount);
-                    return std::max(2, bigCoreCount);
+                    return result;
                 }
             }
         }
@@ -105,6 +116,7 @@ static int getHighPerfCpuCount() {
     int result = (totalCores > 4) ? (totalCores - 4) : totalCores;
     result = std::max(2, result); // At least 2 threads
     LOGI("Using fallback: %d threads (total cores: %u)", result, totalCores);
+    gCachedThreadCount.store(result);
     return result;
 }
 
@@ -174,6 +186,8 @@ static SharedContext* acquire_shared_context(const char* path) {
     shared->refCount = 1;
     gContextCache.emplace(shared->modelPath, shared);
     LOGI("[WHISPER] Context created and cached for %s", path);
+    // Warm up number of threads so subsequent calls reuse cached value
+    (void)getHighPerfCpuCount();
     return shared;
 }
 

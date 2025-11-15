@@ -44,6 +44,31 @@ public class WhisperPlugin: NSObject, FlutterPlugin {
             }
             
             transcribeAsync(filePath: filePath, modelPath: modelPath, result: result)
+        case "transcribeData":
+            guard let args = call.arguments as? [String: Any],
+                  let modelPath = args["modelPath"] as? String else {
+                result(FlutterError(code: "INVALID_ARGUMENT", message: "modelPath and audioData are required", details: nil))
+                return
+            }
+            
+            if let doubles = args["audioData"] as? [Double] {
+                let floatSamples = doubles.map { Float($0) }
+                transcribeBuffer(modelPath: modelPath, samples: floatSamples, result: result)
+            } else if let typed = args["audioData"] as? FlutterStandardTypedData {
+                let byteCount = typed.data.count
+                if byteCount % MemoryLayout<Float>.size != 0 {
+                    result(FlutterError(code: "INVALID_ARGUMENT", message: "audioData has invalid byte length", details: nil))
+                    return
+                }
+                let count = byteCount / MemoryLayout<Float>.size
+                var floatSamples = [Float](repeating: 0, count: count)
+                _ = floatSamples.withUnsafeMutableBytes { mutablePointer in
+                    typed.data.copyBytes(to: mutablePointer)
+                }
+                transcribeBuffer(modelPath: modelPath, samples: floatSamples, result: result)
+            } else {
+                result(FlutterError(code: "INVALID_ARGUMENT", message: "Unsupported audioData format", details: nil))
+            }
             
         default:
             result(FlutterMethodNotImplemented)
@@ -68,6 +93,30 @@ public class WhisperPlugin: NSObject, FlutterPlugin {
                 
                 // Transcribe
                 let transcript = try self.transcribe(context: context, audioData: audioData)
+                
+                DispatchQueue.main.async {
+                    result(transcript)
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    result(FlutterError(code: "TRANSCRIPTION_ERROR", message: error.localizedDescription, details: nil))
+                }
+            }
+        }
+    }
+    
+    private func transcribeBuffer(modelPath: String, samples: [Float], result: @escaping FlutterResult) {
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let self = self else {
+                DispatchQueue.main.async {
+                    result(FlutterError(code: "ERROR", message: "Plugin deallocated", details: nil))
+                }
+                return
+            }
+            
+            do {
+                let context = try self.getOrCreateContext(modelPath: modelPath)
+                let transcript = try self.transcribe(context: context, audioData: samples)
                 
                 DispatchQueue.main.async {
                     result(transcript)

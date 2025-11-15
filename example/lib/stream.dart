@@ -50,6 +50,8 @@ class _WhisperExampleAppState extends State<WhisperExampleApp> {
       modelPath: 'assets/models/silero_vad.onnx',
     );
 
+    await _transcriber.initSession();
+
     setState(() {
       _isReady = true;
     });

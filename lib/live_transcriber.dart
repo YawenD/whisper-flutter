@@ -18,7 +18,7 @@ class WhisperLiveTranscriber {
   final IRecordAdapter _recordAdapter;
   final IVadAdapter _vadAdapter;
 
-  WhisperStreamSession? _session;
+  WhisperStreamSession? _whisperSession;
   StreamSubscription<Uint8List>? _recordSubscription;
   StreamController<String>? _transcriptsController;
   Future<void> _processing = Future.value();
@@ -47,6 +47,19 @@ class WhisperLiveTranscriber {
     }
   }
 
+  Future<void> initSession() async {
+    if (_whisperSession != null) {
+      return;
+    }
+    final modelPath = _modelPath;
+    if (modelPath == null) {
+      throw StateError(
+        'prepare() must be called with a model path before initSession().',
+      );
+    }
+    _whisperSession = WhisperStreamSession.create(modelPath);
+  }
+
   Future<void> startListening() async {
     if (_listening) {
       throw StateError('Live transcription already started.');
@@ -59,7 +72,11 @@ class WhisperLiveTranscriber {
     }
 
     _transcriptsController = StreamController<String>.broadcast();
-    _session = WhisperStreamSession.create(modelPath);
+    if (_whisperSession == null) {
+      _whisperSession = WhisperStreamSession.create(modelPath);
+    } else {
+      _whisperSession!.reset();
+    }
     final audioStream = await _recordAdapter.startStream();
 
     _recordSubscription = audioStream.listen(
@@ -94,8 +111,8 @@ class WhisperLiveTranscriber {
     }
 
     await _closeController();
-    _session?.dispose();
-    _session = null;
+    _whisperSession?.dispose();
+    _whisperSession = null;
   }
 
   Future<void> dispose() async {
@@ -105,12 +122,11 @@ class WhisperLiveTranscriber {
   }
 
   Future<void> _handleChunk(Uint8List chunk) async {
-    final session = _session;
+    final session = _whisperSession;
     if (session == null) {
       return;
     }
 
-    // print('[WhisperLiveTranscriber] vadReady: $_vadReady');
     if (!_vadReady) {
       session.appendPcmBytes(chunk);
       return;
@@ -144,7 +160,7 @@ class WhisperLiveTranscriber {
   }
 
   Future<void> _flushPendingTranscript() async {
-    final session = _session;
+    final session = _whisperSession;
     if (session == null) {
       return;
     }

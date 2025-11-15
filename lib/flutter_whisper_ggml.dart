@@ -33,14 +33,4 @@ class Whisper {
   }) {
     return _impl.transcribe(modelPath: modelPath, wavPath: wavPath);
   }
-
-  Future<String> listenAndTranscribeSpeech({
-    required String modelPath,
-    required Stream<List<int>> audioStream,
-  }) {
-    return _impl.transcribeStream(
-      modelPath: modelPath,
-      audioStream: audioStream,
-    );
-  }
 }
