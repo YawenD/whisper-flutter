@@ -25,6 +25,7 @@ class WhisperLiveTranscriber {
   bool _listening = false;
   bool _vadReady = false;
   String? _modelPath;
+  bool _captureEnabled = true;
 
   Stream<String> get transcripts {
     final controller = _transcriptsController;
@@ -64,6 +65,7 @@ class WhisperLiveTranscriber {
     if (_listening) {
       throw StateError('Live transcription already started.');
     }
+    _captureEnabled = true;
     final modelPath = _modelPath;
     if (modelPath == null) {
       throw StateError(
@@ -99,6 +101,7 @@ class WhisperLiveTranscriber {
   Future<void> stopListening() async {
     if (!_listening) return;
     _listening = false;
+    _captureEnabled = false;
 
     await _recordSubscription?.cancel();
     _recordSubscription = null;
@@ -124,6 +127,9 @@ class WhisperLiveTranscriber {
   Future<void> _handleChunk(Uint8List chunk) async {
     final session = _whisperSession;
     if (session == null) {
+      return;
+    }
+    if (!_captureEnabled) {
       return;
     }
 
@@ -175,6 +181,22 @@ class WhisperLiveTranscriber {
     } finally {
       session.reset();
     }
+  }
+
+  Future<void> pauseCapture() async {
+    if (!_listening) {
+      return;
+    }
+    _captureEnabled = false;
+    await _processing;
+    _whisperSession?.reset();
+  }
+
+  Future<void> resumeCapture() async {
+    if (!_listening) {
+      return;
+    }
+    _captureEnabled = true;
   }
 
   Future<void> _closeController() async {
