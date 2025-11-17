@@ -2,7 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_whisper_ggml/record_adapter.dart';
-import 'package:flutter_whisper_ggml/src/ios_whisper_ffi.dart';
+import 'package:flutter_whisper_ggml/src/whisper_session_worker.dart';
 import 'package:flutter_whisper_ggml/vad_adapter.dart';
 
 class WhisperLiveTranscriber {
@@ -18,7 +18,7 @@ class WhisperLiveTranscriber {
   final IRecordAdapter _recordAdapter;
   final IVadAdapter _vadAdapter;
 
-  WhisperStreamSession? _whisperSession;
+  WhisperSessionWorker? _sessionWorker;
   StreamSubscription<Uint8List>? _recordSubscription;
   StreamController<String>? _transcriptsController;
   Future<void> _processing = Future.value();
@@ -49,7 +49,7 @@ class WhisperLiveTranscriber {
   }
 
   Future<void> initSession() async {
-    if (_whisperSession != null) {
+    if (_sessionWorker != null) {
       return;
     }
     final modelPath = _modelPath;
@@ -58,7 +58,7 @@ class WhisperLiveTranscriber {
         'prepare() must be called with a model path before initSession().',
       );
     }
-    _whisperSession = WhisperStreamSession.create(modelPath);
+    _sessionWorker = await WhisperSessionWorker.spawn(modelPath);
   }
 
   Future<void> startListening() async {
@@ -74,10 +74,10 @@ class WhisperLiveTranscriber {
     }
 
     _transcriptsController = StreamController<String>.broadcast();
-    if (_whisperSession == null) {
-      _whisperSession = WhisperStreamSession.create(modelPath);
+    if (_sessionWorker == null) {
+      _sessionWorker = await WhisperSessionWorker.spawn(modelPath);
     } else {
-      _whisperSession!.reset();
+      await _sessionWorker!.reset();
     }
     final audioStream = await _recordAdapter.startStream();
 
@@ -114,8 +114,8 @@ class WhisperLiveTranscriber {
     }
 
     await _closeController();
-    _whisperSession?.dispose();
-    _whisperSession = null;
+    await _sessionWorker?.dispose();
+    _sessionWorker = null;
   }
 
   Future<void> dispose() async {
@@ -125,7 +125,7 @@ class WhisperLiveTranscriber {
   }
 
   Future<void> _handleChunk(Uint8List chunk) async {
-    final session = _whisperSession;
+    final session = _sessionWorker;
     if (session == null) {
       return;
     }
@@ -134,7 +134,7 @@ class WhisperLiveTranscriber {
     }
 
     if (!_vadReady) {
-      session.appendPcmBytes(chunk);
+      await session.appendPcmBytes(Uint8List.fromList(chunk));
       return;
     }
 
@@ -152,9 +152,9 @@ class WhisperLiveTranscriber {
           );
         }
 
-        session.appendFloatSamples(speechSamples);
-        final transcript = session.transcribeSync().trim();
-        session.reset();
+        final transcript = (await session.transcribeFloatSamples(
+          speechSamples,
+        )).trim();
 
         if (transcript.isNotEmpty) {
           _transcriptsController?.add(transcript);
@@ -166,20 +166,20 @@ class WhisperLiveTranscriber {
   }
 
   Future<void> _flushPendingTranscript() async {
-    final session = _whisperSession;
+    final session = _sessionWorker;
     if (session == null) {
       return;
     }
 
     try {
-      final transcript = session.transcribeSync().trim();
+      final transcript = (await session.transcribeBuffered()).trim();
       if (transcript.isNotEmpty) {
         _transcriptsController?.add(transcript);
       }
     } catch (error, stackTrace) {
       _transcriptsController?.addError(error, stackTrace);
     } finally {
-      session.reset();
+      await session.reset();
     }
   }
 
@@ -189,7 +189,7 @@ class WhisperLiveTranscriber {
     }
     _captureEnabled = false;
     await _processing;
-    _whisperSession?.reset();
+    await _sessionWorker?.reset();
   }
 
   Future<void> resumeCapture() async {
