@@ -1,9 +1,26 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.22)
 
 project(whisper.cpp)
 
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC")
 set(CMAKE_CXX_STANDARD 17)
 set(WHISPER_LIB_DIR ${CMAKE_SOURCE_DIR}/whisper)
+
+set(GGML_CUDA OFF)
+set(GGML_METAL OFF)
+set(GGML_VULKAN OFF)
+set(GGML_OPENCL OFF)
+set(GGML_WEBGPU OFF)
+set(GGML_RPC OFF)
+set(GGML_BLAS OFF)
+set(GGML_SYCL OFF)
+set(GGML_HIP OFF)
+set(GGML_MUSA OFF)
+set(GGML_ZDNN OFF)
+
 
 message(STATUS "[WHISPER_DEBUG] CMAKE_SOURCE_DIR: ${CMAKE_SOURCE_DIR}")
 message(STATUS "[WHISPER_DEBUG] WHISPER_LIB_DIR: ${WHISPER_LIB_DIR}")
@@ -30,6 +47,7 @@ set(
     )
 
 find_library(LOG_LIB log)
+
 
 include(FetchContent)
 
@@ -75,8 +93,6 @@ endfunction()
 
 if (${ANDROID_ABI} STREQUAL "arm64-v8a")
     build_library("whisper_v8fp16_va")
-elseif (${ANDROID_ABI} STREQUAL "armeabi-v7a")
-    build_library("whisper_vfpv4")
 endif ()
 
 build_library("whisper") # Default target
