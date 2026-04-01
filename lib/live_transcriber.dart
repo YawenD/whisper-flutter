@@ -114,8 +114,10 @@ class WhisperLiveTranscriber {
     }
 
     await _closeController();
-    await _sessionWorker?.dispose();
-    _sessionWorker = null;
+    // Keep the worker (and native context) alive to avoid reloading
+    // the model on the next startListening(). It will be released
+    // in dispose().
+    await _sessionWorker?.reset();
   }
 
   Future<void> dispose() async {

@@ -11,17 +11,18 @@ Future<String> copyAssetFile(String src, [String? dst]) async {
   final Directory directory = await getApplicationSupportDirectory();
   dst ??= basename(src);
   final target = join(directory.path, dst);
-  bool exists = await File(target).exists();
+
+  // Check existence BEFORE loading the asset into RAM.
+  if (await File(target).exists()) {
+    return target;
+  }
 
   final data = await rootBundle.load(src);
-
-  if (!exists || File(target).lengthSync() != data.lengthInBytes) {
-    final List<int> bytes = data.buffer.asUint8List(
-      data.offsetInBytes,
-      data.lengthInBytes,
-    );
-    await File(target).writeAsBytes(bytes);
-  }
+  final List<int> bytes = data.buffer.asUint8List(
+    data.offsetInBytes,
+    data.lengthInBytes,
+  );
+  await File(target).writeAsBytes(bytes);
 
   return target;
 }

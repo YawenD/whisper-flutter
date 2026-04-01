@@ -19,9 +19,17 @@ class WhisperSessionWorker {
       debugName: 'WhisperSessionWorker',
     );
 
-    final sendPort = await readyPort.first as SendPort;
+    // The isolate sends the SendPort only AFTER loading the model,
+    // so spawn() blocks until the model is ready.
+    final result = await readyPort.first;
     readyPort.close();
-    return WhisperSessionWorker._(sendPort, isolate);
+
+    if (result is Map && result['error'] != null) {
+      isolate.kill(priority: Isolate.immediate);
+      throw Exception(result['error'] as String);
+    }
+
+    return WhisperSessionWorker._(result as SendPort, isolate);
   }
 
   Future<void> appendPcmBytes(Uint8List bytes) async {
@@ -90,9 +98,17 @@ class _WhisperSessionIsolate {
     final SendPort handshakePort = args[1] as SendPort;
     final commandPort = ReceivePort();
 
-    handshakePort.send(commandPort.sendPort);
+    // Load the model BEFORE the handshake so that spawn() blocks
+    // until the model is ready.
+    final WhisperStreamSession session;
+    try {
+      session = WhisperStreamSession.create(modelPath);
+    } catch (e) {
+      handshakePort.send(<String, dynamic>{'error': e.toString()});
+      return;
+    }
 
-    final session = WhisperStreamSession.create(modelPath);
+    handshakePort.send(commandPort.sendPort);
 
     await for (final dynamic raw in commandPort) {
       if (raw is! Map) {
