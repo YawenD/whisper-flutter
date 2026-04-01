@@ -30,7 +30,7 @@ class VadAdapter implements IVadAdapter {
       model: await copyAssetFile(modelPath),
       // threshold: 0.6,
       minSilenceDuration: 1.75,
-      minSpeechDuration: 0.5,
+      minSpeechDuration: 0.3,
       maxSpeechDuration: 60.0,
     );
 
