@@ -50,6 +50,8 @@ dependencies:
   path_provider: ^2.1.5
   flutter_sound: ^9.28.0
   wav: ^1.5.0
+  # Direct use in lib/bench.dart (sherpa-onnx Whisper comparison).
+  sherpa_onnx: ^1.12.15
 
 dev_dependencies:
   flutter_test:
@@ -105,5 +107,15 @@ flutter:
   # see https://flutter.dev/to/font-from-package
 
   assets:
-    - assets/models/ggml-tiny-q5_1.bin
-    - assets/models/silero_vad.onnx
+    # Whole directory: any ggml-*.bin dropped here shows up in lib/bench.dart.
+    - assets/models/
+    # Core ML encoders (iOS, optional, measured not worth it on recent
+    # iPhones): a .mlmodelc is a directory and Flutter does not recurse into
+    # asset directories, so list each level, e.g.
+    #   - assets/models/ggml-small-encoder.mlmodelc/
+    #   - assets/models/ggml-small-encoder.mlmodelc/weights/
+    #   - assets/models/ggml-small-encoder.mlmodelc/analytics/
+    # sherpa-onnx Whisper base (default Android engine). Large files are
+    # git-ignored: run tool/download_models.sh.
+    - assets/sherpa/whisper-base/
+    - assets/bench/

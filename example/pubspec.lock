@@ -424,7 +424,7 @@ packages:
     source: hosted
     version: "0.28.0"
   sherpa_onnx:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: sherpa_onnx
       sha256: "297a4eda27bd2a07dfb80031ae514cc4fb4a5019e415bd01601a93d8bd95189b"

@@ -7,6 +7,7 @@
 #include <string.h>
 #include "whisper.h"
 #include "ggml.h"
+#include "WhisperBridge.h"
 
 #define UNUSED(x) (void)(x)
 #define TAG "JNI"
@@ -70,6 +71,9 @@ JNIEXPORT jlong JNICALL
 Java_com_whispercppdemo_whisper_WhisperLib_00024Companion_initContextFromInputStream(
         JNIEnv *env, jobject thiz, jobject input_stream) {
     UNUSED(thiz);
+    if (!whisper_bridge_cpu_supported()) {
+        return 0;
+    }
 
     struct whisper_context *context = NULL;
     struct whisper_model_loader loader = {};
@@ -134,6 +138,9 @@ JNIEXPORT jlong JNICALL
 Java_com_whispercpp_whisper_WhisperLib_00024Companion_initContextFromAsset(
         JNIEnv *env, jobject thiz, jobject assetManager, jstring asset_path_str) {
     UNUSED(thiz);
+    if (!whisper_bridge_cpu_supported()) {
+        return 0;
+    }
     struct whisper_context *context = NULL;
     const char *asset_path_chars = (*env)->GetStringUTFChars(env, asset_path_str, NULL);
     context = whisper_init_from_asset(env, assetManager, asset_path_chars);
@@ -145,6 +152,9 @@ JNIEXPORT jlong JNICALL
 Java_com_whispercpp_whisper_WhisperLib_00024Companion_initContext(
         JNIEnv *env, jobject thiz, jstring model_path_str) {
     UNUSED(thiz);
+    if (!whisper_bridge_cpu_supported()) {
+        return 0;
+    }
     struct whisper_context *context = NULL;
     const char *model_path_chars = (*env)->GetStringUTFChars(env, model_path_str, NULL);
     context = whisper_init_from_file_with_params(model_path_chars, whisper_context_default_params());
@@ -182,6 +192,9 @@ Java_com_whispercpp_whisper_WhisperLib_00024Companion_fullTranscribe(
     params.offset_ms = 0;
     params.no_context = true;
     params.single_segment = false;
+    // Same latency guards as the FFI bridge (see make_default_full_params).
+    params.temperature_inc = 0.0f;
+    params.suppress_nst = true;
 
     whisper_reset_timings(context);
 
