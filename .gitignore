@@ -31,3 +31,16 @@ migrate_working_dir/
 .flutter-plugins-dependencies
 /build/
 /coverage/
+
+# Extra Whisper models dropped in for benchmarking (tens/hundreds of MB)
+example/assets/models/ggml-*.bin
+example/assets/models/*.mlmodelc/
+example/assets/sherpa/**
+!example/assets/sherpa/*/
+!example/assets/sherpa/*/.gitkeep
+
+# FVM Version Cache
+.fvm/
+
+# Local assistant instructions (not versioned)
+CLAUDE.md

@@ -35,6 +35,15 @@
             "program": "example/lib/stream.dart",
         },
         {
+            "name": "bench_release",
+            "request": "launch",
+            "type": "dart",
+            "program": "example/lib/bench.dart",
+            "args": [
+                "--release"
+            ]
+        },
+        {
             "name": "stream_release",
             "request": "launch",
             "type": "dart",
