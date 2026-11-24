@@ -11,6 +11,7 @@
 // check the speed gain does not cost accuracy (compare the WER). Reference clips live in
 // assets/bench/ and their expected transcripts in [_references].
 
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/foundation.dart';
@@ -18,6 +19,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_whisper_ggml/flutter_whisper_ggml.dart';
 import 'package:flutter_whisper_ggml/utils.dart' show copyAssetFile;
+import 'package:path_provider/path_provider.dart';
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 import 'package:wav/wav.dart';
 
@@ -31,6 +33,14 @@ const String _benchModel = String.fromEnvironment('BENCH_MODEL');
 /// --dart-define=BENCH_PLAN=ggml-small-q5_1.bin:metal,ggml-small-q5_1.bin:coreml
 /// --dart-define=BENCH_PLAN=ggml-base-q5_1.bin:cpu:2,ggml-base-q5_1.bin:cpu:6
 const String _benchPlan = String.fromEnvironment('BENCH_PLAN');
+
+/// Clip set: `tts` (assets/bench/, synthetic voices) or `real`
+/// (assets/bench_real/, recorded with lib/record_set.dart, references in
+/// assets/bench_real/references.tsv).
+const String _benchSet = String.fromEnvironment(
+  'BENCH_SET',
+  defaultValue: 'tts',
+);
 
 /// Runs per clip in auto mode (default 3).
 const int _benchRuns = int.fromEnvironment('BENCH_RUNS', defaultValue: 3);
@@ -105,6 +115,10 @@ class _ClipResult {
 class _BenchPageState extends State<BenchPage> {
   List<String> _models = [];
   List<String> _clips = [];
+  final Map<String, String> _refs = Map.of(_references);
+
+  /// Peak-normalize every clip before transcription (microphone level test).
+  bool _normalize = false;
   String? _model;
   int _runs = 3;
   bool _compareCtx = false;
@@ -145,9 +159,12 @@ class _BenchPageState extends State<BenchPage> {
               )
               .toList()
             ..sort();
+      final clipDir = _benchSet == 'real'
+          ? 'assets/bench_real/'
+          : 'assets/bench/';
       _clips =
           assets
-              .where((a) => a.startsWith('assets/bench/') && a.endsWith('.wav'))
+              .where((a) => a.startsWith(clipDir) && a.endsWith('.wav'))
               .toList()
             ..sort();
       _model = _models.isEmpty
@@ -163,6 +180,19 @@ class _BenchPageState extends State<BenchPage> {
           ? 'Aucun modèle ggml-*.bin dans assets/models/'
           : 'Prêt (${_clips.length} clips de référence)';
     });
+    if (_benchSet == 'real') {
+      try {
+        final tsv = await rootBundle.loadString(
+          'assets/bench_real/references.tsv',
+        );
+        for (final line in tsv.split('\n')) {
+          final cols = line.split('\t');
+          if (cols.length == 2) _refs['assets/bench_real/${cols[0]}'] = cols[1];
+        }
+      } catch (e) {
+        _log('error=no references.tsv for the real set ($e)');
+      }
+    }
     if (kReleaseMode == false) {
       setState(() {
         _status =
@@ -195,6 +225,7 @@ class _BenchPageState extends State<BenchPage> {
           // "whisper-base:sherpa:4:int8|fp32|mixed" → assets/sherpa/whisper-base/
           final threads = parts.length >= 3 ? int.tryParse(parts[2]) ?? 4 : 4;
           final precision = parts.length >= 4 ? parts[3] : 'int8';
+          _normalize = parts.contains('norm');
           setState(() => _runs = _benchRuns);
           await _runSherpa(parts.first, threads, precision);
           continue;
@@ -207,6 +238,11 @@ class _BenchPageState extends State<BenchPage> {
         setState(() {
           _model = model.first;
           _coreMl = parts.length >= 2 && parts[1] == 'coreml';
+          _normalize = parts.contains('norm');
+          // Same initial prompt as lib/stream.dart, to measure its effect.
+          _prompt.text = parts.contains('prompt')
+              ? 'Conversation en français.'
+              : '';
           _threads = parts.length >= 3 ? int.tryParse(parts[2]) ?? 0 : 0;
           _runs = _benchRuns;
         });
@@ -224,10 +260,10 @@ class _BenchPageState extends State<BenchPage> {
   /// freezes during the run; fine for a benchmark). The model folder
   /// `assets/sherpa/<name>/` holds `<size>-encoder.int8.onnx`,
   /// `<size>-decoder.int8.onnx` and `<size>-tokens.txt`.
-  /// [precision]: `int8` (both int8), `fp32` (both fp32) or `mixed` (fp32
-  /// encoder, int8 decoder).
+  /// [precision]: `int8` (both int8), `fp32` (both fp32), `mixed` (fp32
+  /// encoder, int8 decoder) or `encint8` (int8 encoder, fp32 decoder).
   Future<void> _runSherpa(String name, int threads, String precision) async {
-    final label = 'sherpa-$precision';
+    final label = 'sherpa-$precision${_normalize ? '-norm' : ''}';
     setState(() {
       _running = true;
       _results.clear();
@@ -246,29 +282,68 @@ class _BenchPageState extends State<BenchPage> {
       }
       String pick(String suffix) =>
           files.entries.firstWhere((e) => e.key.endsWith(suffix)).value;
-      final encoderSuffix = precision == 'int8'
+      final encoderSuffix = (precision == 'int8' || precision == 'encint8')
           ? '-encoder.int8.onnx'
           : '-encoder.onnx';
-      final decoderSuffix = precision == 'fp32'
+      final decoderSuffix = (precision == 'fp32' || precision == 'encint8')
           ? '-decoder.onnx'
           : '-decoder.int8.onnx';
 
       _setStatus('sherpa-onnx : chargement…');
       final loadWatch = Stopwatch()..start();
       sherpa.initBindings();
+      // NeMo transducers (Parakeet) ship encoder/decoder/joiner + tokens.txt;
+      // NeMo Canary ships encoder/decoder + tokens.txt (folder name "canary*").
+      final isTransducer = files.keys.any((f) => f.startsWith('joiner'));
+      final isCanary = name.startsWith('canary');
+      // NeMo CTC models ship a single model.int8.onnx + tokens.txt.
+      final isCtc = files.containsKey('model.int8.onnx');
       recognizer = sherpa.OfflineRecognizer(
         sherpa.OfflineRecognizerConfig(
-          model: sherpa.OfflineModelConfig(
-            whisper: sherpa.OfflineWhisperModelConfig(
-              encoder: pick(encoderSuffix),
-              decoder: pick(decoderSuffix),
-              language: 'fr',
-              task: 'transcribe',
-            ),
-            tokens: pick('-tokens.txt'),
-            numThreads: threads,
-            debug: false,
-          ),
+          model: isCtc
+              ? sherpa.OfflineModelConfig(
+                  nemoCtc: sherpa.OfflineNemoEncDecCtcModelConfig(
+                    model: pick('model.int8.onnx'),
+                  ),
+                  tokens: pick('tokens.txt'),
+                  numThreads: threads,
+                  debug: false,
+                )
+              : isCanary
+              ? sherpa.OfflineModelConfig(
+                  canary: sherpa.OfflineCanaryModelConfig(
+                    encoder: pick('encoder.int8.onnx'),
+                    decoder: pick('decoder.int8.onnx'),
+                    srcLang: 'fr',
+                    tgtLang: 'fr',
+                  ),
+                  tokens: pick('tokens.txt'),
+                  numThreads: threads,
+                  debug: false,
+                )
+              : isTransducer
+              ? sherpa.OfflineModelConfig(
+                  transducer: sherpa.OfflineTransducerModelConfig(
+                    encoder: pick('encoder.int8.onnx'),
+                    decoder: pick('decoder.int8.onnx'),
+                    joiner: pick('joiner.int8.onnx'),
+                  ),
+                  tokens: pick('tokens.txt'),
+                  modelType: 'nemo_transducer',
+                  numThreads: threads,
+                  debug: false,
+                )
+              : sherpa.OfflineModelConfig(
+                  whisper: sherpa.OfflineWhisperModelConfig(
+                    encoder: pick(encoderSuffix),
+                    decoder: pick(decoderSuffix),
+                    language: 'fr',
+                    task: 'transcribe',
+                  ),
+                  tokens: pick('-tokens.txt'),
+                  numThreads: threads,
+                  debug: false,
+                ),
         ),
       );
       loadWatch.stop();
@@ -330,7 +405,7 @@ class _BenchPageState extends State<BenchPage> {
           clip: entry.key,
           runs: runs,
           text: text,
-          wer: _wer(_references[entry.key], text),
+          wer: _wer(_refs[entry.key], text),
         );
         setState(() => _results.add(result));
         _log(
@@ -366,7 +441,21 @@ class _BenchPageState extends State<BenchPage> {
     if (wav.samplesPerSecond != 16000 || wav.channels.length != 1) {
       throw StateError('$asset must be 16 kHz mono');
     }
-    return Float32List.fromList(wav.channels.first);
+    final samples = Float32List.fromList(wav.channels.first);
+    if (_normalize) {
+      // Peak to 0.9, gain capped at 20x (+26 dB) so silence stays silence.
+      var peak = 0.0;
+      for (final v in samples) {
+        if (v.abs() > peak) peak = v.abs();
+      }
+      if (peak > 0) {
+        final gain = math.min(0.9 / peak, 20.0);
+        for (var i = 0; i < samples.length; i++) {
+          samples[i] *= gain;
+        }
+      }
+    }
+    return samples;
   }
 
   Future<void> _run() async {
@@ -382,10 +471,7 @@ class _BenchPageState extends State<BenchPage> {
 
     final prompt = _prompt.text.trim().isEmpty ? null : _prompt.text.trim();
     final configs = <String, WhisperDecodingOptions>{
-      '30 s': WhisperDecodingOptions(
-        initialPrompt: prompt,
-        threads: _threads,
-      ),
+      '30 s': WhisperDecodingOptions(initialPrompt: prompt, threads: _threads),
       if (_compareCtx) ...{
         'dyn m128': WhisperDecodingOptions(
           dynamicAudioCtx: true,
@@ -444,6 +530,7 @@ class _BenchPageState extends State<BenchPage> {
       _log(
         'model=$model coreml=${_coreMl ? 'on' : 'off'} '
         'threads=${_threads == 0 ? 'auto' : _threads} '
+        'norm=$_normalize prompt=${prompt != null} '
         'load=${_loadMs!.toStringAsFixed(0)}ms',
       );
       _log('system_info=$info');
@@ -478,7 +565,7 @@ class _BenchPageState extends State<BenchPage> {
             clip: entry.key,
             runs: runs,
             text: text,
-            wer: _wer(_references[entry.key], text),
+            wer: _wer(_refs[entry.key], text),
           );
           setState(() => _results.add(result));
           _log(
@@ -523,21 +610,110 @@ class _BenchPageState extends State<BenchPage> {
 
   void _setStatus(String s) => setState(() => _status = s);
 
-  // print() on purpose: these lines must also show up in release logs.
-  // ignore: avoid_print
-  void _log(String line) => print('[BENCH] $line');
+  /// Results are also appended to Documents/bench.log, because `print` does
+  /// not reach `flutter run` in iOS release builds. Fetch it with:
+  /// xcrun devicectl device copy from --device DEVICE_ID --domain-type
+  /// appDataContainer --domain-identifier BUNDLE_ID
+  /// --source Documents/bench.log --destination bench.log
+  void _log(String line) {
+    // print() on purpose: these lines must also show up in release logs.
+    // ignore: avoid_print
+    print('[BENCH] $line');
+    _logFile.then(
+      (f) => f.writeAsStringSync('[BENCH] $line\n', mode: FileMode.append),
+    );
+  }
+
+  static final Future<File> _logFile = getApplicationDocumentsDirectory().then((
+    dir,
+  ) {
+    final file = File('${dir.path}/bench.log');
+    if (file.existsSync()) file.deleteSync();
+    return file;
+  });
 
   static String _short(String asset) => asset.split('/').last;
 
-  /// Word error rate after lowercasing and stripping punctuation.
-  static double _wer(String? reference, String hypothesis) {
-    if (reference == null) return double.nan;
-    List<String> words(String s) => s
-        .toLowerCase()
-        .replaceAll(RegExp(r"[^\p{L}\p{N}' ]", unicode: true), ' ')
+  /// French spelling of 0..999999 (enough for times, counts, amounts).
+  static String _frNumber(int n) {
+    const units = [
+      'zéro',
+      'un',
+      'deux',
+      'trois',
+      'quatre',
+      'cinq',
+      'six',
+      'sept',
+      'huit',
+      'neuf',
+      'dix',
+      'onze',
+      'douze',
+      'treize',
+      'quatorze',
+      'quinze',
+      'seize',
+    ];
+    const tens = [
+      '',
+      '',
+      'vingt',
+      'trente',
+      'quarante',
+      'cinquante',
+      'soixante',
+    ];
+    String below100(int n) {
+      if (n < 17) return units[n];
+      if (n < 20) return 'dix ${units[n - 10]}';
+      if (n < 70) {
+        final t = tens[n ~/ 10], u = n % 10;
+        return u == 0 ? t : (u == 1 ? '$t et un' : '$t ${units[u]}');
+      }
+      if (n < 80) {
+        return n == 71 ? 'soixante et onze' : 'soixante ${below100(n - 60)}';
+      }
+      if (n == 80) return 'quatre vingts';
+      return 'quatre vingt ${below100(n - 80)}';
+    }
+
+    String below1000(int n) {
+      if (n < 100) return below100(n);
+      final h = n ~/ 100, r = n % 100;
+      final head = h == 1 ? 'cent' : '${units[h]} cent${r == 0 ? 's' : ''}';
+      return r == 0 ? head : '$head ${below100(r)}';
+    }
+
+    if (n < 1000) return below1000(n);
+    final th = n ~/ 1000, r = n % 1000;
+    final head = th == 1 ? 'mille' : '${below1000(th)} mille';
+    return r == 0 ? head : '$head ${below1000(r)}';
+  }
+
+  /// Lowercase, no punctuation, numbers and times ("18h30") spelled out, so
+  /// "18h30" and "dix-huit heures trente" count as the same words.
+  static List<String> _werWords(String s) {
+    var t = s.toLowerCase();
+    t = t.replaceAllMapped(
+      RegExp(r'(\d+)\s*h\s*(\d+)?'),
+      (m) => '${m[1]} heures ${m[2] ?? ''}',
+    );
+    t = t.replaceAllMapped(
+      RegExp(r'\d+'),
+      (m) => _frNumber(int.parse(m[0]!) % 1000000),
+    );
+    return t
+        .replaceAll(RegExp(r"[^\p{L}']+", unicode: true), ' ')
         .split(RegExp(r'\s+'))
         .where((w) => w.isNotEmpty)
         .toList();
+  }
+
+  /// Word error rate after the [_werWords] normalization.
+  static double _wer(String? reference, String hypothesis) {
+    if (reference == null) return double.nan;
+    List<String> words(String s) => _werWords(s);
     final r = words(reference);
     final h = words(hypothesis);
     if (r.isEmpty) return h.isEmpty ? 0 : 1;
@@ -604,9 +780,7 @@ class _BenchPageState extends State<BenchPage> {
             contentPadding: EdgeInsets.zero,
             title: const Text('Comparer les variantes (ctx, marge, repli)'),
             value: _compareCtx,
-            onChanged: _running
-                ? null
-                : (v) => setState(() => _compareCtx = v),
+            onChanged: _running ? null : (v) => setState(() => _compareCtx = v),
           ),
           TextField(
             controller: _prompt,

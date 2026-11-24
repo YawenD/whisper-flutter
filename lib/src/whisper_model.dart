@@ -1,6 +1,6 @@
 import 'dart:io';
 
-import 'package:path/path.dart' show basename;
+import 'package:path/path.dart' show basename, dirname;
 
 import '../utils.dart' show copyAssetFile;
 import '../whisper_method_channel.dart';
@@ -65,24 +65,112 @@ class SherpaOnnxWhisperModel extends WhisperModel {
   final int threads;
 
   @override
-  Future<WhisperEngineSpec> resolve() async {
-    Future<String> file(String source) async {
-      if (source.startsWith('/')) {
-        if (!await File(source).exists()) {
-          throw ArgumentError.value(source, 'path', 'Model file not found');
-        }
-        return source;
-      }
-      return copyAssetFile(source, 'models/sherpa/${basename(source)}');
-    }
+  Future<WhisperEngineSpec> resolve() async => WhisperEngineSpec.sherpaOnnx(
+    encoder: await _sherpaFile(encoder),
+    decoder: await _sherpaFile(decoder),
+    tokens: await _sherpaFile(tokens),
+    threads: threads,
+  );
+}
 
-    return WhisperEngineSpec.sherpaOnnx(
-      encoder: await file(encoder),
-      decoder: await file(decoder),
-      tokens: await file(tokens),
-      threads: threads,
-    );
+/// Asset key or absolute path → absolute path. Assets are copied once under
+/// `models/sherpa/<asset folder>/<file>`: several NeMo models share file
+/// names (`encoder.int8.onnx`...), so the folder keeps them apart.
+Future<String> _sherpaFile(String source) async {
+  if (source.startsWith('/')) {
+    if (!await File(source).exists()) {
+      throw ArgumentError.value(source, 'path', 'Model file not found');
+    }
+    return source;
   }
+  return copyAssetFile(
+    source,
+    'models/sherpa/${basename(dirname(source))}/${basename(source)}',
+  );
+}
+
+/// NVIDIA NeMo Canary (e.g. Canary-180M-Flash: en/de/es/fr) exported for
+/// sherpa-onnx (`sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8`):
+/// `encoder.int8.onnx`, `decoder.int8.onnx`, `tokens.txt`.
+///
+/// Measured on a real French voice (Pixel 9a, CPU): ~6.7% WER at ~0.26 s per
+/// sentence, vs ~19% / ~1.5 s for whisper.cpp base-q8_0. ~200 MB, CC-BY-4.0
+/// (credit NVIDIA in the app). The language must be explicit (no `auto`).
+class SherpaOnnxCanaryModel extends WhisperModel {
+  const SherpaOnnxCanaryModel({
+    required this.encoder,
+    required this.decoder,
+    required this.tokens,
+    this.threads = 4,
+  });
+
+  final String encoder;
+  final String decoder;
+  final String tokens;
+  final int threads;
+
+  @override
+  Future<WhisperEngineSpec> resolve() async =>
+      WhisperEngineSpec._(WhisperEngineSpec.canaryEngine, {
+        'encoder': await _sherpaFile(encoder),
+        'decoder': await _sherpaFile(decoder),
+        'tokens': await _sherpaFile(tokens),
+      }, threads);
+}
+
+/// NVIDIA NeMo transducer (Parakeet TDT, multilingual FastConformer...)
+/// exported for sherpa-onnx: `encoder.int8.onnx`, `decoder.int8.onnx`,
+/// `joiner.int8.onnx`, `tokens.txt`. Multilingual models detect the language
+/// themselves.
+///
+/// Measured on a real French voice (Pixel 9a): FastConformer en/de/es/fr
+/// (~130 MB) ~10.5% WER at ~0.07 s per sentence; Parakeet TDT 0.6B v3
+/// (~670 MB) ~6.6% at ~0.19 s.
+class SherpaOnnxTransducerModel extends WhisperModel {
+  const SherpaOnnxTransducerModel({
+    required this.encoder,
+    required this.decoder,
+    required this.joiner,
+    required this.tokens,
+    this.threads = 4,
+  });
+
+  final String encoder;
+  final String decoder;
+  final String joiner;
+  final String tokens;
+  final int threads;
+
+  @override
+  Future<WhisperEngineSpec> resolve() async =>
+      WhisperEngineSpec._(WhisperEngineSpec.transducerEngine, {
+        'encoder': await _sherpaFile(encoder),
+        'decoder': await _sherpaFile(decoder),
+        'joiner': await _sherpaFile(joiner),
+        'tokens': await _sherpaFile(tokens),
+      }, threads);
+}
+
+/// NVIDIA NeMo CTC model exported for sherpa-onnx: `model.int8.onnx`,
+/// `tokens.txt`. Measured: FastConformer CTC en/de/es/fr (~126 MB) ~14.5% WER
+/// at ~0.06 s per sentence on a Pixel 9a.
+class SherpaOnnxNemoCtcModel extends WhisperModel {
+  const SherpaOnnxNemoCtcModel({
+    required this.model,
+    required this.tokens,
+    this.threads = 4,
+  });
+
+  final String model;
+  final String tokens;
+  final int threads;
+
+  @override
+  Future<WhisperEngineSpec> resolve() async => WhisperEngineSpec._(
+    WhisperEngineSpec.nemoCtcEngine,
+    {'model': await _sherpaFile(model), 'tokens': await _sherpaFile(tokens)},
+    threads,
+  );
 }
 
 /// Resolved engine description, sendable to the worker isolate.
@@ -97,13 +185,20 @@ class WhisperEngineSpec {
     required String decoder,
     required String tokens,
     int threads = 4,
-  }) : this._(
-         'sherpa-onnx',
-         {'encoder': encoder, 'decoder': decoder, 'tokens': tokens},
-         threads,
-       );
+  }) : this._('sherpa-onnx', {
+         'encoder': encoder,
+         'decoder': decoder,
+         'tokens': tokens,
+       }, threads);
 
-  /// `ggml` (whisper.cpp) or `sherpa-onnx`.
+  static const String ggmlEngine = 'ggml';
+  static const String sherpaWhisperEngine = 'sherpa-onnx';
+  static const String canaryEngine = 'sherpa-canary';
+  static const String transducerEngine = 'sherpa-transducer';
+  static const String nemoCtcEngine = 'sherpa-nemo-ctc';
+
+  /// One of [ggmlEngine], [sherpaWhisperEngine], [canaryEngine],
+  /// [transducerEngine], [nemoCtcEngine].
   final String engine;
   final Map<String, String> files;
   final int threads;

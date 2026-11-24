@@ -138,7 +138,9 @@ class WhisperSessionWorker {
       final reason = handshake is Map
           ? handshake['error']
           : 'isolate exited during startup';
-      throw WhisperWorkerException('Unable to start the Whisper worker: $reason');
+      throw WhisperWorkerException(
+        'Unable to start the Whisper worker: $reason',
+      );
     }
 
     return WhisperSessionWorker._(
@@ -304,7 +306,10 @@ abstract class _Engine {
       case 'ggml':
         return _WhisperCppEngine(spec.files['model']!, language)
           ..configure(options);
-      case 'sherpa-onnx':
+      case WhisperEngineSpec.sherpaWhisperEngine:
+      case WhisperEngineSpec.canaryEngine:
+      case WhisperEngineSpec.transducerEngine:
+      case WhisperEngineSpec.nemoCtcEngine:
         return _SherpaOnnxEngine(spec, language);
       default:
         throw ArgumentError('Unknown engine: ${spec.engine}');
@@ -354,23 +359,69 @@ class _SherpaOnnxEngine implements _Engine {
     }
     // Bindings are per isolate.
     sherpa.initBindings();
+    _isNemo = spec.engine != WhisperEngineSpec.sherpaWhisperEngine;
     _recognizer = sherpa.OfflineRecognizer(
-      sherpa.OfflineRecognizerConfig(
-        model: sherpa.OfflineModelConfig(
+      sherpa.OfflineRecognizerConfig(model: _modelConfig(spec, language)),
+    );
+  }
+
+  static sherpa.OfflineModelConfig _modelConfig(
+    WhisperEngineSpec spec,
+    String language,
+  ) {
+    final f = spec.files;
+    switch (spec.engine) {
+      case WhisperEngineSpec.canaryEngine:
+        if (language == 'auto') {
+          throw ArgumentError('Canary needs an explicit language, not "auto".');
+        }
+        return sherpa.OfflineModelConfig(
+          canary: sherpa.OfflineCanaryModelConfig(
+            encoder: f['encoder']!,
+            decoder: f['decoder']!,
+            srcLang: language,
+            tgtLang: language,
+          ),
+          tokens: f['tokens']!,
+          numThreads: spec.threads,
+          debug: false,
+        );
+      case WhisperEngineSpec.transducerEngine:
+        return sherpa.OfflineModelConfig(
+          transducer: sherpa.OfflineTransducerModelConfig(
+            encoder: f['encoder']!,
+            decoder: f['decoder']!,
+            joiner: f['joiner']!,
+          ),
+          tokens: f['tokens']!,
+          modelType: 'nemo_transducer',
+          numThreads: spec.threads,
+          debug: false,
+        );
+      case WhisperEngineSpec.nemoCtcEngine:
+        return sherpa.OfflineModelConfig(
+          nemoCtc: sherpa.OfflineNemoEncDecCtcModelConfig(model: f['model']!),
+          tokens: f['tokens']!,
+          numThreads: spec.threads,
+          debug: false,
+        );
+      default:
+        return sherpa.OfflineModelConfig(
           whisper: sherpa.OfflineWhisperModelConfig(
-            encoder: spec.files['encoder']!,
-            decoder: spec.files['decoder']!,
+            encoder: f['encoder']!,
+            decoder: f['decoder']!,
             // Empty = automatic language detection.
             language: language == 'auto' ? '' : language,
             task: 'transcribe',
           ),
-          tokens: spec.files['tokens']!,
+          tokens: f['tokens']!,
           numThreads: spec.threads,
           debug: false,
-        ),
-      ),
-    );
+        );
+    }
   }
+
+  late final bool _isNemo;
 
   final int _threads;
   late final sherpa.OfflineRecognizer _recognizer;
@@ -379,7 +430,8 @@ class _SherpaOnnxEngine implements _Engine {
   WhisperStats? _lastStats;
 
   @override
-  void appendPcm16(Uint8List bytes) => appendFloat(convertBytesToFloat32(bytes));
+  void appendPcm16(Uint8List bytes) =>
+      appendFloat(convertBytesToFloat32(bytes));
 
   @override
   void appendFloat(Float32List samples) {
@@ -422,7 +474,8 @@ class _SherpaOnnxEngine implements _Engine {
         noSpeechProb: 0,
         avgLogprob: 0,
       );
-      return result.text.trim();
+      final text = result.text.trim();
+      return _isNemo ? normalizeNemoText(text) : text;
     } finally {
       stream.free();
     }
@@ -452,6 +505,11 @@ class _SherpaOnnxEngine implements _Engine {
   @override
   String get systemInfo => 'sherpa-onnx (ONNX Runtime, CPU, $_threads threads)';
 }
+
+/// NeMo tokenizers emit hyphenated words with spaces around the hyphen
+/// ("Rappelle - moi", "va - t - il"): glue them back.
+String normalizeNemoText(String text) =>
+    text.replaceAll(RegExp(r'(?<=\S)\s+-\s+(?=\S)'), '-');
 
 class _WhisperSessionIsolate {
   static void entryPoint(List<dynamic> args) async {

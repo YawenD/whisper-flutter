@@ -35,6 +35,8 @@ migrate_working_dir/
 # Extra Whisper models dropped in for benchmarking (tens/hundreds of MB)
 example/assets/models/ggml-*.bin
 example/assets/models/*.mlmodelc/
+example/assets/bench_real/*
+!example/assets/bench_real/.gitkeep
 example/assets/sherpa/**
 !example/assets/sherpa/*/
 !example/assets/sherpa/*/.gitkeep

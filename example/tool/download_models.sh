@@ -2,8 +2,11 @@
 # Download the models used by the example app that are too large for git.
 #   - ggml-small-q5_1.bin : whisper.cpp, default on iOS (lib/stream.dart)
 #   - ggml-base-q5_1.bin  : whisper.cpp, Android fallback and benchmarks
-#   - sherpa-onnx Whisper base (fp32): default engine on Android
-# Pass --int8 to also fetch the sherpa-onnx int8 exports (lib/bench.dart only).
+#   - NVIDIA Canary-180M-Flash (sherpa-onnx int8): default engine on Android
+#   - NVIDIA FastConformer transducer en/de/es/fr (sherpa-onnx int8)
+#   - sherpa-onnx Whisper base (fp32): comparison engine
+# Pass --int8 to also fetch the Whisper base int8 exports (lib/bench.dart).
+# NVIDIA models are CC-BY-4.0: credit NVIDIA in the app.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -33,5 +36,21 @@ if [ ! -f "$dest/base-encoder.onnx" ] || { [ "${1:-}" = "--int8" ] && [ ! -f "$d
     cp "$src/base-encoder.int8.onnx" "$src/base-decoder.int8.onnx" "$dest/"
   fi
 fi
+
+# NVIDIA NeMo models: archive name -> destination folder.
+fetch_nemo() {
+  local archive=$1 dest=$2
+  if [ -f "$dest/tokens.txt" ]; then return; fi
+  echo "Downloading $archive..."
+  mkdir -p "$dest"
+  local tmp
+  tmp=$(mktemp -d)
+  curl -L --fail -o "$tmp/model.tar.bz2" "$SHERPA/$archive.tar.bz2"
+  tar xjf "$tmp/model.tar.bz2" -C "$tmp"
+  cp "$tmp/$archive"/*.onnx "$tmp/$archive/tokens.txt" "$dest/"
+  rm -rf "$tmp"
+}
+fetch_nemo sherpa-onnx-nemo-canary-180m-flash-en-es-de-fr-int8 assets/sherpa/canary-180m
+fetch_nemo sherpa-onnx-nemo-fast-conformer-transducer-en-de-es-fr-14288-int8 assets/sherpa/fc-transducer
 
 echo "Models ready."

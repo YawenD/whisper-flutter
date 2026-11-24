@@ -5,41 +5,70 @@ import 'package:flutter/material.dart';
 import 'package:flutter_whisper_ggml/flutter_whisper_ggml.dart';
 import 'package:permission_handler/permission_handler.dart';
 
-/// Engine override: --dart-define=LIVE_ENGINE=ggml|sherpa
+/// Engine override: --dart-define=LIVE_ENGINE=canary|fastconformer|ggml|sherpa
+///   canary        NVIDIA Canary-180M-Flash (sherpa-onnx), ~200 MB
+///   fastconformer NVIDIA multilingual FastConformer transducer, ~130 MB
+///   ggml          whisper.cpp (LIVE_MODEL picks the ggml file)
+///   sherpa        Whisper base exported to ONNX (LIVE_SHERPA=fp32|encint8)
 const String _liveEngineOverride = String.fromEnvironment('LIVE_ENGINE');
 
+/// Whisper-ONNX encoder precision: --dart-define=LIVE_SHERPA=fp32|encint8.
+const String _liveSherpa = String.fromEnvironment(
+  'LIVE_SHERPA',
+  defaultValue: 'fp32',
+);
+
 /// ggml model override (whisper.cpp engine), e.g.
-/// --dart-define=LIVE_MODEL=ggml-base-q4_0.bin
+/// --dart-define=LIVE_MODEL=ggml-base-q8_0.bin
 const String _liveModelOverride = String.fromEnvironment('LIVE_MODEL');
 
 /// Partial results override: --dart-define=LIVE_PARTIALS=true|false
 const String _livePartialsOverride = String.fromEnvironment('LIVE_PARTIALS');
 
-/// Defaults measured with lib/bench.dart: iPhone runs whisper.cpp small on
-/// Metal in ~0.4-0.75 s per sentence. Android is CPU-only: whisper.cpp base
-/// takes ~2 s per sentence on a Pixel 9a, sherpa-onnx (ONNX Runtime) base fp32
-/// ~0.4-1.5 s for a similar accuracy, and each partial result costs a full
-/// inference.
-final bool _useSherpa = _liveEngineOverride.isNotEmpty
-    ? _liveEngineOverride == 'sherpa'
-    : Platform.isAndroid;
+/// Defaults measured with lib/bench.dart on a real French voice: on a Pixel 9a
+/// (CPU only) Canary-180M-Flash gets ~6.7% WER at ~0.26 s per sentence, vs
+/// ~19% / ~1.5 s for whisper.cpp base-q8_0. iPhone keeps whisper.cpp small on
+/// Metal (~0.4-0.75 s) until Canary is measured there.
+final String _engine = _liveEngineOverride.isNotEmpty
+    ? _liveEngineOverride
+    : (Platform.isAndroid ? 'canary' : 'ggml');
 final String _liveModel = _liveModelOverride.isNotEmpty
     ? _liveModelOverride
-    : (Platform.isIOS ? 'ggml-small-q5_1.bin' : 'ggml-base-q5_1.bin');
+    : (Platform.isIOS ? 'ggml-small-q5_1.bin' : 'ggml-base-q8_0.bin');
 
-WhisperModel get _whisperModel => _useSherpa
-    ? const SherpaOnnxWhisperModel(
-        encoder: 'assets/sherpa/whisper-base/base-encoder.onnx',
-        decoder: 'assets/sherpa/whisper-base/base-decoder.onnx',
-        tokens: 'assets/sherpa/whisper-base/base-tokens.txt',
-      )
-    : GgmlWhisperModel('assets/models/$_liveModel', useCoreMl: _liveCoreMl);
+WhisperModel get _whisperModel => switch (_engine) {
+  'canary' => const SherpaOnnxCanaryModel(
+    encoder: 'assets/sherpa/canary-180m/encoder.int8.onnx',
+    decoder: 'assets/sherpa/canary-180m/decoder.int8.onnx',
+    tokens: 'assets/sherpa/canary-180m/tokens.txt',
+  ),
+  'fastconformer' => const SherpaOnnxTransducerModel(
+    encoder: 'assets/sherpa/fc-transducer/encoder.int8.onnx',
+    decoder: 'assets/sherpa/fc-transducer/decoder.int8.onnx',
+    joiner: 'assets/sherpa/fc-transducer/joiner.int8.onnx',
+    tokens: 'assets/sherpa/fc-transducer/tokens.txt',
+  ),
+  'sherpa' => SherpaOnnxWhisperModel(
+    encoder: _liveSherpa == 'encint8'
+        ? 'assets/sherpa/whisper-base/base-encoder.int8.onnx'
+        : 'assets/sherpa/whisper-base/base-encoder.onnx',
+    decoder: 'assets/sherpa/whisper-base/base-decoder.onnx',
+    tokens: 'assets/sherpa/whisper-base/base-tokens.txt',
+  ),
+  _ => GgmlWhisperModel('assets/models/$_liveModel', useCoreMl: _liveCoreMl),
+};
 
-String get _modelLabel =>
-    _useSherpa ? 'sherpa-onnx base fp32' : 'whisper.cpp $_liveModel';
+String get _modelLabel => switch (_engine) {
+  'canary' => 'Canary-180M-Flash',
+  'fastconformer' => 'FastConformer',
+  'sherpa' => 'Whisper-ONNX base $_liveSherpa',
+  _ => 'whisper.cpp $_liveModel',
+};
+/// Partial results cost one inference each: cheap everywhere except
+/// whisper.cpp on Android CPU (~1.5 s).
 final bool _livePartials = _livePartialsOverride.isNotEmpty
     ? _livePartialsOverride == 'true'
-    : Platform.isIOS;
+    : (Platform.isIOS || _engine != 'ggml');
 
 /// Core ML encoder on iOS when bundled (--dart-define=LIVE_COREML=true).
 /// Off by default: Metal measured as accurate and fast enough on recent
@@ -167,9 +196,7 @@ class _WhisperExampleAppState extends State<WhisperExampleApp>
     return MaterialApp(
       home: Scaffold(
         appBar: AppBar(
-          title: Text(
-            '$_modelLabel${_livePartials ? '' : ' · sans partiels'}',
-          ),
+          title: Text('$_modelLabel${_livePartials ? '' : ' · sans partiels'}'),
         ),
         body: Padding(
           padding: const EdgeInsets.all(16),

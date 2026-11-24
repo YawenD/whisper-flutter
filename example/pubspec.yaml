@@ -118,4 +118,13 @@ flutter:
     # sherpa-onnx Whisper base (default Android engine). Large files are
     # git-ignored: run tool/download_models.sh.
     - assets/sherpa/whisper-base/
+    # NVIDIA Parakeet TDT 0.6B v3 (sherpa-onnx int8, CC-BY-4.0), benchmark only.
+    - assets/sherpa/parakeet-v3/
+    # NVIDIA Canary 180M Flash (sherpa-onnx int8, CC-BY-4.0), benchmark only.
+    - assets/sherpa/canary-180m/
+    # NVIDIA multilingual FastConformer (en/de/es/fr, int8), benchmark only.
+    - assets/sherpa/fc-transducer/
+    - assets/sherpa/fc-ctc/
     - assets/bench/
+    # Real-voice test set from lib/record_set.dart (git-ignored).
+    - assets/bench_real/

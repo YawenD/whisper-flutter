@@ -357,7 +357,10 @@ class WhisperStreamSession {
   bool _isDisposed = false;
 
   /// Build a streaming session backed by the shared native context.
-  static WhisperStreamSession create(String modelPath, {String language = 'fr'}) {
+  static WhisperStreamSession create(
+    String modelPath, {
+    String language = 'fr',
+  }) {
     final ffi = WhisperNativeFfi.instance;
     if (!ffi.isCpuSupported) {
       throw UnsupportedError(
