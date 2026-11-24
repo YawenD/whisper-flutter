@@ -2,6 +2,13 @@ cmake_minimum_required(VERSION 3.10)
 
 project(whisper.cpp)
 
+# Google Play requires native libraries aligned on 16 KB pages for apps
+# targeting Android 15+. NDK r27 (Flutter's default) still links with 4 KB
+# alignment unless asked; set before FetchContent so ggml's libraries get it
+# too. Check with: llvm-readelf -lW lib.so | grep LOAD  (Align = 0x4000).
+set(CMAKE_SHARED_LINKER_FLAGS
+    "${CMAKE_SHARED_LINKER_FLAGS} -Wl,-z,max-page-size=16384")
+
 set(CMAKE_CXX_STANDARD 17)
 set(WHISPER_LIB_DIR ${CMAKE_SOURCE_DIR}/whisper)
 
