@@ -13,6 +13,9 @@ export 'src/whisper_model.dart'
         WhisperModel,
         GgmlWhisperModel,
         SherpaOnnxWhisperModel,
+        SherpaOnnxCanaryModel,
+        SherpaOnnxTransducerModel,
+        SherpaOnnxNemoCtcModel,
         WhisperEngineSpec;
 export 'vad_adapter.dart' show VadAdapter, VadSettings, IVadAdapter;
 export 'record_adapter.dart' show RecordAdapter, IRecordAdapter;
