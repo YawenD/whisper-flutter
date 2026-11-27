@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_whisper_ggml/record_adapter.dart';
 import 'package:flutter_whisper_ggml/src/hallucination_filter.dart';
+import 'package:flutter_whisper_ggml/src/speech_queue.dart';
 import 'package:flutter_whisper_ggml/src/whisper_model.dart';
 import 'package:flutter_whisper_ggml/src/whisper_session_worker.dart';
 import 'package:flutter_whisper_ggml/src/whisper_stats.dart';
@@ -19,6 +20,20 @@ class WhisperBacklogException implements Exception {
   String toString() =>
       'WhisperBacklogException: inference too slow, dropped '
       '${droppedSeconds.toStringAsFixed(1)} s of speech';
+}
+
+/// A transcript with the span of captured audio it covers, counted from the
+/// start of listening (pauses of the microphone stream excluded, since no
+/// audio arrives then).
+class TimedTranscript {
+  const TimedTranscript(this.text, this.start, this.end);
+
+  final String text;
+  final Duration start;
+  final Duration end;
+
+  @override
+  String toString() => 'TimedTranscript($start-$end, "$text")';
 }
 
 enum _State { idle, starting, listening, stopping }
@@ -100,6 +115,10 @@ class WhisperLiveTranscriber {
       StreamController<String>.broadcast();
   final StreamController<String> _partials =
       StreamController<String>.broadcast();
+  final StreamController<TimedTranscript> _timedTranscripts =
+      StreamController<TimedTranscript>.broadcast();
+  final StreamController<TimedTranscript> _timedPartials =
+      StreamController<TimedTranscript>.broadcast();
 
   WhisperSessionWorker? _worker;
   StreamSubscription<Uint8List>? _recordSubscription;
@@ -110,8 +129,18 @@ class WhisperLiveTranscriber {
   bool _disposed = false;
   WhisperEngineSpec? _engineSpec;
 
-  final List<Float32List> _queue = [];
-  int _queuedSamples = 0;
+  late final SpeechQueue _queue = SpeechQueue(
+    maxBatchSamples: _maxBatchSamples,
+    mergeGapSamples: _mergeGapSamples,
+    maxBacklogSamples: maxBacklog.inMilliseconds * _sampleRate ~/ 1000,
+  );
+
+  /// Samples received from the microphone since listening started.
+  int _clock = 0;
+
+  /// [_clock] when the VAD received its first sample since its last reset:
+  /// VAD positions are relative to it. Null until then.
+  int? _vadOrigin;
   Future<void>? _pump;
   Future<void>? _partialInFlight;
   DateTime _lastPartial = DateTime.fromMillisecondsSinceEpoch(0);
@@ -125,6 +154,12 @@ class WhisperLiveTranscriber {
   /// [enablePartialResults]). Each one supersedes the previous; the next
   /// final transcript supersedes them all.
   Stream<String> get partialTranscripts => _partials.stream;
+
+  /// Same as [transcripts], with the span of audio each one covers.
+  Stream<TimedTranscript> get timedTranscripts => _timedTranscripts.stream;
+
+  /// Same as [partialTranscripts], with the span of the speech in progress.
+  Stream<TimedTranscript> get timedPartialTranscripts => _timedPartials.stream;
 
   bool get isListening => _state == _State.listening;
 
@@ -184,8 +219,9 @@ class WhisperLiveTranscriber {
       final worker = await _ensureWorker();
       await worker.reset();
       _vadAdapter.reset();
+      _vadOrigin = null;
       _queue.clear();
-      _queuedSamples = 0;
+      _clock = 0;
       _captureEnabled = true;
 
       final audio = await _recordAdapter.startStream();
@@ -215,6 +251,7 @@ class WhisperLiveTranscriber {
     _captureEnabled = false;
     if (_vadReady) {
       _vadAdapter.reset();
+      _vadOrigin = null;
     } else {
       await _worker?.reset();
     }
@@ -236,6 +273,8 @@ class WhisperLiveTranscriber {
     await _vadAdapter.dispose();
     await _transcripts.close();
     await _partials.close();
+    await _timedTranscripts.close();
+    await _timedPartials.close();
   });
 
   // --- internals -----------------------------------------------------------
@@ -295,7 +334,12 @@ class WhisperLiveTranscriber {
 
     if (_vadReady) {
       // Force out the speech in progress so the last words are not dropped.
-      _vadAdapter.flush().forEach(_enqueue);
+      final origin = _vadOrigin ?? _clock;
+      for (final segment in _vadAdapter.flush()) {
+        _enqueue(segment, origin);
+      }
+      // flush() resets the detector.
+      _vadOrigin = null;
       await _drain();
     } else {
       await _transcribeBuffered();
@@ -315,7 +359,12 @@ class WhisperLiveTranscriber {
   }
 
   void _onAudio(Uint8List chunk) {
-    if (!_captureEnabled || _state != _State.listening) return;
+    if (_state != _State.listening) return;
+    final at = _clock;
+    // Every received sample moves the clock, ignored or not, so positions
+    // match the captured audio.
+    _clock += chunk.length ~/ 2;
+    if (!_captureEnabled) return;
 
     if (!_vadReady) {
       // No VAD: accumulate everything natively, transcribed at stop.
@@ -326,27 +375,23 @@ class WhisperLiveTranscriber {
     }
 
     // VAD runs synchronously on every chunk, whatever Whisper is doing.
+    final origin = _vadOrigin ??= at;
     final segments = _vadAdapter.acceptPcm16(chunk);
     if (segments.isNotEmpty) {
-      segments.forEach(_enqueue);
+      for (final segment in segments) {
+        _enqueue(segment, origin);
+      }
     } else if (enablePartialResults) {
       _maybeTranscribePartial();
     }
   }
 
-  void _enqueue(Float32List segment) {
-    if (segment.isEmpty) return;
+  void _enqueue(VadSegment segment, int origin) {
+    if (segment.samples.isEmpty) return;
     _utterance++;
-    _queue.add(segment);
-    _queuedSamples += segment.length;
-
-    final maxSamples = maxBacklog.inMilliseconds * _sampleRate ~/ 1000;
-    var dropped = 0;
-    while (_queuedSamples > maxSamples && _queue.length > 1) {
-      final oldest = _queue.removeAt(0);
-      _queuedSamples -= oldest.length;
-      dropped += oldest.length;
-    }
+    final dropped = _queue.add(
+      QueuedSpeech(segment.samples, origin + segment.start),
+    );
     if (dropped > 0) {
       _transcripts.addError(WhisperBacklogException(dropped / _sampleRate));
     }
@@ -359,37 +404,13 @@ class WhisperLiveTranscriber {
       // Let a partial inference finish first: the worker is sequential anyway.
       await _partialInFlight;
       while (_queue.isNotEmpty) {
-        final batch = _takeBatch();
-        await _transcribeFinal(batch);
+        await _transcribeFinal(_queue.take());
       }
     } finally {
       // Cleared in the same synchronous step as the final empty-queue check,
       // so a segment enqueued right after always starts a new pump.
       _pump = null;
     }
-  }
-
-  /// Take the oldest segments, merged up to Whisper's window.
-  Float32List _takeBatch() {
-    final parts = <Float32List>[_queue.removeAt(0)];
-    var total = parts.first.length;
-    while (_queue.isNotEmpty &&
-        total + _mergeGapSamples + _queue.first.length <= _maxBatchSamples) {
-      total += _mergeGapSamples + _queue.first.length;
-      parts.add(_queue.removeAt(0));
-    }
-    for (final p in parts) {
-      _queuedSamples -= p.length;
-    }
-    if (parts.length == 1) return parts.first;
-
-    final merged = Float32List(total); // zero-filled gaps
-    var offset = 0;
-    for (final p in parts) {
-      merged.setRange(offset, offset + p.length, p);
-      offset += p.length + _mergeGapSamples;
-    }
-    return merged;
   }
 
   Future<void> _drain() async {
@@ -399,12 +420,12 @@ class WhisperLiveTranscriber {
     }
   }
 
-  Future<void> _transcribeFinal(Float32List samples) async {
+  Future<void> _transcribeFinal(QueuedSpeech speech) async {
     final worker = _worker;
     if (worker == null) return;
     try {
-      final result = await worker.transcribe(samples);
-      _emitFinal(result);
+      final result = await worker.transcribe(speech.samples);
+      _emitFinal(result, speech.start, speech.end);
     } catch (error, stackTrace) {
       _transcripts.addError(error, stackTrace);
     }
@@ -414,13 +435,14 @@ class WhisperLiveTranscriber {
     final worker = _worker;
     if (worker == null) return;
     try {
-      _emitFinal(await worker.transcribeBuffered());
+      // Without VAD the whole capture is one transcript.
+      _emitFinal(await worker.transcribeBuffered(), 0, _clock);
     } catch (error, stackTrace) {
       _transcripts.addError(error, stackTrace);
     }
   }
 
-  void _emitFinal(WhisperTranscription result) {
+  void _emitFinal(WhisperTranscription result, int start, int end) {
     final dropped = hallucinationFilter.isHallucination(
       result.text,
       result.stats,
@@ -434,6 +456,7 @@ class WhisperLiveTranscriber {
     }
     if (!dropped && !_transcripts.isClosed) {
       _transcripts.add(result.text);
+      _timedTranscripts.add(_timed(result.text, start, end));
     }
   }
 
@@ -442,7 +465,11 @@ class WhisperLiveTranscriber {
     final now = DateTime.now();
     if (now.difference(_lastPartial) < partialInterval) return;
     final speech = _vadAdapter.currentSpeech;
-    if (speech == null || speech.length < _sampleRate) return;
+    final speechStart = _vadAdapter.currentSpeechStart;
+    final origin = _vadOrigin;
+    if (speech == null || speechStart == null || origin == null) return;
+    if (speech.length < _sampleRate) return;
+    final start = origin + speechStart;
     final worker = _worker;
     if (worker == null) return;
 
@@ -456,6 +483,7 @@ class WhisperLiveTranscriber {
             !_partials.isClosed &&
             !hallucinationFilter.isHallucination(result.text, result.stats)) {
           _partials.add(result.text);
+          _timedPartials.add(_timed(result.text, start, start + speech.length));
         }
       } catch (_) {
         // Partial results are best effort.
@@ -464,4 +492,10 @@ class WhisperLiveTranscriber {
       }
     }();
   }
+
+  static TimedTranscript _timed(String text, int start, int end) =>
+      TimedTranscript(text, _duration(start), _duration(end));
+
+  static Duration _duration(int samples) =>
+      Duration(microseconds: samples * 1000000 ~/ _sampleRate);
 }

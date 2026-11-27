@@ -3,7 +3,7 @@ import 'dart:io';
 import 'whisper_method_channel.dart';
 
 export 'live_transcriber.dart'
-    show WhisperLiveTranscriber, WhisperBacklogException;
+    show WhisperLiveTranscriber, WhisperBacklogException, TimedTranscript;
 export 'src/hallucination_filter.dart' show HallucinationFilter;
 export 'src/whisper_session_worker.dart'
     show WhisperSessionWorker, WhisperTranscription, WhisperWorkerException;
@@ -17,7 +17,7 @@ export 'src/whisper_model.dart'
         SherpaOnnxTransducerModel,
         SherpaOnnxNemoCtcModel,
         WhisperEngineSpec;
-export 'vad_adapter.dart' show VadAdapter, VadSettings, IVadAdapter;
+export 'vad_adapter.dart' show VadAdapter, VadSettings, IVadAdapter, VadSegment;
 export 'record_adapter.dart' show RecordAdapter, IRecordAdapter;
 // Export implementations for direct access if needed
 export 'whisper_method_channel.dart' show WhisperMethodChannel;

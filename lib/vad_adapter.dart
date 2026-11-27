@@ -31,20 +31,37 @@ class VadSettings {
   final double maxSpeechDuration;
 }
 
+/// A completed speech segment.
+class VadSegment {
+  const VadSegment(this.samples, this.start);
+
+  final Float32List samples;
+
+  /// Position of the first sample, counted in samples fed to the detector
+  /// since its last [IVadAdapter.reset] (or [IVadAdapter.flush]).
+  final int start;
+
+  int get end => start + samples.length;
+}
+
 abstract class IVadAdapter {
   Future<void> initSilero({required String modelPath});
 
   /// Feed PCM16 little-endian mono 16 kHz bytes and return the speech
   /// segments completed by this chunk (usually none).
-  List<Float32List> acceptPcm16(Uint8List bytes);
+  List<VadSegment> acceptPcm16(Uint8List bytes);
 
   /// Force the segment in progress out of the detector (e.g. when the user
   /// stops while still speaking) and return the remaining speech segments.
-  List<Float32List> flush();
+  List<VadSegment> flush();
 
   /// Audio of the speech segment currently in progress (with a short pre-roll),
   /// or null when nobody is speaking. Used for partial transcripts.
   Float32List? get currentSpeech;
+
+  /// Position of the first sample of [currentSpeech], on the same scale as
+  /// [VadSegment.start]; null when nobody is speaking.
+  int? get currentSpeechStart;
 
   /// Drop any buffered audio and the detector state (new session, pause...).
   void reset();
@@ -68,7 +85,11 @@ class VadAdapter implements IVadAdapter {
   final List<Float32List> _preRoll = [];
   int _preRollSamples = 0;
   final List<Float32List> _speech = [];
+  int _speechStart = 0;
   bool _wasDetected = false;
+
+  /// Samples fed to the detector since the last reset.
+  int _fed = 0;
 
   int get _preRollCapacity =>
       ((settings.minSpeechDuration + 0.3) * _sampleRate).round();
@@ -99,7 +120,7 @@ class VadAdapter implements IVadAdapter {
   }
 
   @override
-  List<Float32List> acceptPcm16(Uint8List bytes) {
+  List<VadSegment> acceptPcm16(Uint8List bytes) {
     final vad = _vad;
     final buffer = _buffer;
     if (vad == null || buffer == null) {
@@ -107,7 +128,7 @@ class VadAdapter implements IVadAdapter {
     }
     buffer.push(convertBytesToFloat32(bytes));
 
-    final segments = <Float32List>[];
+    final segments = <VadSegment>[];
     final windowSize = _vadConfig.sileroVad.windowSize;
     while (buffer.size >= windowSize) {
       final window = buffer.get(startIndex: buffer.head, n: windowSize);
@@ -120,7 +141,7 @@ class VadAdapter implements IVadAdapter {
   }
 
   @override
-  List<Float32List> flush() {
+  List<VadSegment> flush() {
     final vad = _vad;
     final buffer = _buffer;
     if (vad == null || buffer == null) {
@@ -135,7 +156,7 @@ class VadAdapter implements IVadAdapter {
     }
 
     vad.flush();
-    final segments = <Float32List>[];
+    final segments = <VadSegment>[];
     _drainSegments(segments);
     // flush() finalizes the stream: start the next session from a clean state.
     reset();
@@ -151,6 +172,9 @@ class VadAdapter implements IVadAdapter {
   }
 
   @override
+  int? get currentSpeechStart => _speech.isEmpty ? null : _speechStart;
+
+  @override
   void reset() {
     _vad?.reset();
     _buffer?.reset();
@@ -158,11 +182,13 @@ class VadAdapter implements IVadAdapter {
     _preRollSamples = 0;
     _speech.clear();
     _wasDetected = false;
+    _fed = 0;
   }
 
   void _trackSpeech(Float32List window, bool detected) {
     if (detected) {
       if (!_wasDetected) {
+        _speechStart = _fed - _preRollSamples;
         _speech
           ..clear()
           ..addAll(_preRoll);
@@ -179,14 +205,15 @@ class VadAdapter implements IVadAdapter {
       }
     }
     _wasDetected = detected;
+    _fed += window.length;
   }
 
-  void _drainSegments(List<Float32List> out) {
+  void _drainSegments(List<VadSegment> out) {
     final vad = _vad!;
     while (!vad.isEmpty()) {
       final segment = vad.front();
       vad.pop();
-      out.add(segment.samples);
+      out.add(VadSegment(segment.samples, segment.start));
       // The in-progress speech became a final segment.
       _speech.clear();
     }
